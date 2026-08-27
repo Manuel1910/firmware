@@ -46,6 +46,8 @@ struct BannerOverlayOptions {
 
 bool shouldWakeOnReceivedMessage();
 
+class MeshModule;
+
 #if !HAS_SCREEN
 #include "Power.h"
 namespace graphics
@@ -73,6 +75,9 @@ class Screen
     void increaseBrightness() {}
     void decreaseBrightness() {}
     void startAlert(const char *) {}
+    void setModalModule(MeshModule *) {}
+    void clearModalModule(MeshModule *) {}
+    bool hasModalModule() const { return false; }
     void showSimpleBanner(const char *message, uint32_t durationMs = 0) {}
     void showOverlayBanner(BannerOverlayOptions) {}
     void setFrames(FrameFocus focus) {}
@@ -337,6 +342,16 @@ class Screen : public concurrency::OSThread
         cmd.cmd = Cmd::STOP_ALERT_FRAME;
         enqueueCmd(cmd);
     }
+
+    // Holds the screen against the carousel, the new-message banner and a foreign endAlert().
+    // Only the owner can release it, unlike endAlert(), which any caller can fire.
+    void setModalModule(MeshModule *owner) { modalModule = owner; }
+    void clearModalModule(MeshModule *owner)
+    {
+        if (modalModule == owner)
+            modalModule = nullptr;
+    }
+    bool hasModalModule() const { return modalModule != nullptr; }
 
     void showSimpleBanner(const char *message, uint32_t durationMs = 0);
     void showOverlayBanner(BannerOverlayOptions);
@@ -680,6 +695,9 @@ class Screen : public concurrency::OSThread
     uint16_t displayHeight = 0;
 
   private:
+    // nullptr for every build with no modal module, which is why the three sites are unchanged.
+    MeshModule *modalModule = nullptr;
+
     FrameCallback alertFrames[1];
     struct ScreenCmd {
         Cmd cmd;
