@@ -1352,6 +1352,10 @@ void GPS::setConnected()
 // We want a GPS lock. Wake the hardware
 void GPS::up()
 {
+#if defined(TTGO_T_ECHO_PLUS)
+    if (gnssModel == GNSS_MODEL_MTK || gnssModel == GNSS_MODEL_UNKNOWN)
+        reader.resetTrackedSatelliteActivity();
+#endif
     scheduling.informSearching();
     setPowerState(GPS_ACTIVE);
 }
@@ -1562,17 +1566,36 @@ int32_t GPS::runOnce()
             }
         }
 
-        bool tooLong = scheduling.searchedTooLong();
+        bool tooLong = false;
+#if defined(TTGO_T_ECHO_PLUS)
+        if (gnssModel == GNSS_MODEL_MTK) {
+            constexpr uint32_t noTrackedTimeoutMs = 15UL * 60UL * 1000UL;
+            const uint32_t now = Time::getMillis();
+            const uint32_t lastTracked = reader.trackedSatellitesLastUpdate();
+            const uint32_t noTrackedForMs =
+                lastTracked != 0 ? (now - lastTracked) : scheduling.elapsedSearchMs();
+
+            // A missing fix alone is no longer a reason to stop the L76K search.
+            // The timer is reset by every checksum-valid GSV sentence that
+            // contains at least one tracked satellite with C/N0/SNR.
+            tooLong = noTrackedForMs >= noTrackedTimeoutMs;
+        } else {
+            tooLong = scheduling.searchedTooLong();
+        }
+#else
+        tooLong = scheduling.searchedTooLong();
+#endif
+
         if (tooLong && !gotLoc) {
-            LOG_WARN("Can't publish valid location: no GPS lock in time");
+#if defined(TTGO_T_ECHO_PLUS)
+            if (gnssModel == GNSS_MODEL_MTK)
+                LOG_WARN("L76K: no tracked satellites for 15 minutes; ending GPS search");
+            else
+#endif
+                LOG_WARN("Can't publish valid location: no GPS lock in time");
             // we didn't get a location during this ack window, therefore declare loss of lock
             if (hasValidLocation) {
-                // Losing a position fix must not erase independent receiver
-                // status. Keep the latest satellite count so GPSStatus/Base
-                // UI can still show satellites that are currently visible.
-                const uint32_t lastSatsInView = p.sats_in_view;
                 p = meshtastic_Position_init_default;
-                p.sats_in_view = lastSatsInView;
                 hasValidLocation = false;
                 shouldPublish = true;
                 LOG_DEBUG_GPS("hasValidLocation FALLING EDGE");
@@ -2121,36 +2144,10 @@ bool GPS::lookForTime()
  */
 bool GPS::lookForLocation()
 {
-    // GGA provides fix quality. The native TinyGPS++ GSA parser provides
-    // the 2D/3D fix type and multi-GNSS DOP values.
+    // By default, TinyGPS++ does not parse GPGSA lines, which give us
+    //   the 2D/3D fixType (see NMEAGPS.h)
+    // At a minimum, use the fixQuality indicator in GPGGA (FIXME?)
     fixQual = reader.fixQuality();
-    const uint8_t parsedFixType = reader.gsaFixType();
-
-    // Satellite visibility is status information, not proof of a valid
-    // position fix. Update it before any of the early returns below so the
-    // Base UI can show satellites while the receiver is still acquiring or
-    // while another validation check rejects the current position solution.
-    // Prefer the true GSV satellites-in-view count and fall back to GGA.
-    const uint16_t satsInView = reader.satellitesInView();
-    uint16_t reportedSats = 0;
-    bool haveSatelliteCount = false;
-
-    if (satsInView > 0) {
-        reportedSats = satsInView;
-        haveSatelliteCount = true;
-    } else if (reader.satellites.isValid()) {
-        reportedSats = reader.satellites.value();
-        haveSatelliteCount = true;
-    }
-
-    if (haveSatelliteCount && p.sats_in_view != reportedSats) {
-        p.sats_in_view = reportedSats;
-        // Publish the status change even if lookForLocation() returns false
-        // later. PositionModule ignores the position while hasValidLocation
-        // is false, but GPSStatus/Base UI still receives the satellite count.
-        shouldPublish = true;
-        LOG_DEBUG_GPS("Satellite status updated: view=%u", p.sats_in_view);
-    }
 
 #ifndef TINYGPS_OPTION_NO_STATISTICS
     if (reader.failedChecksum() > lastChecksumFailCount) {
@@ -2164,24 +2161,38 @@ bool GPS::lookForLocation()
     }
 #endif
 
+#ifndef TINYGPS_OPTION_NO_CUSTOM_FIELDS
+    fixType = reader.gsaFixType();
+    if (fixType == 0)
+        fixType = atoi(gsafixtype.value());
+#endif
+
     // check if GPS has an acceptable lock
     if (!hasLock())
         return false;
 
 #if GPS_DEBUG
-    LOG_DEBUG("AGE: LOC=%d DATE=%d TIME=%d FIXTYPE=%u", reader.location.age(), reader.date.age(), reader.time.age(),
-              parsedFixType);
+    LOG_DEBUG("AGE: LOC=%d FIX=%d DATE=%d TIME=%d", reader.location.age(),
+#ifndef TINYGPS_OPTION_NO_CUSTOM_FIELDS
+              gsafixtype.age(),
+#else
+              0,
+#endif
+              reader.date.age(), reader.time.age());
 #endif // GPS_DEBUG
 
     // Is this a new point or are we re-reading the previous one?
     if (!reader.location.isUpdated() && !reader.altitude.isUpdated())
         return false;
 
-    // Check that the position, time and date belong to a fresh solution.
-    // GSA freshness is no longer tied to the legacy TinyGPSCustom field;
-    // the native GSA parser is used directly.
-    if (!((reader.location.age() < GPS_SOL_EXPIRY_MS) && (reader.time.age() < GPS_SOL_EXPIRY_MS) &&
-          (reader.date.age() < GPS_SOL_EXPIRY_MS))) {
+    // check if a complete GPS solution set is available for reading
+    //   tinyGPSDatum::age() also includes isValid() test
+    // FIXME
+    if (!((reader.location.age() < GPS_SOL_EXPIRY_MS) &&
+#ifndef TINYGPS_OPTION_NO_CUSTOM_FIELDS
+          (gsafixtype.age() < GPS_SOL_EXPIRY_MS) &&
+#endif
+          (reader.time.age() < GPS_SOL_EXPIRY_MS) && (reader.date.age() < GPS_SOL_EXPIRY_MS))) {
         LOG_WARN("SOME data TOO OLD: LOC %u, TIME %u, DATE %u", reader.location.age(), reader.time.age(), reader.date.age());
         return false;
     }
@@ -2201,17 +2212,22 @@ bool GPS::lookForLocation()
 
     p.location_source = meshtastic_Position_LocSource_LOC_INTERNAL;
 
-    // Dilution of precision is reported in 10^2 units.
-    // Prefer the native GSA values and fall back to GGA HDOP when GSA
-    // has not produced a value yet.
+    // Dilution of precision (an accuracy metric) is reported in 10^2 units, so we need to scale down when we use it
+#ifndef TINYGPS_OPTION_NO_CUSTOM_FIELDS
     const uint16_t gsaHdop = reader.gsaHDOP();
     const uint16_t gsaPdop = reader.gsaPDOP();
     p.HDOP = gsaHdop ? gsaHdop : reader.hdop.value();
-    p.PDOP = gsaPdop ? gsaPdop : static_cast<uint16_t>(1.41f * p.HDOP);
+    p.PDOP = gsaPdop ? gsaPdop : TinyGPSPlus::parseDecimal(gsapdop.value());
+#else
+    // FIXME! naive PDOP emulation (assumes VDOP==HDOP)
+    // correct formula is PDOP = SQRT(HDOP^2 + VDOP^2)
+    p.HDOP = reader.hdop.value();
+    p.PDOP = 1.41 * reader.hdop.value();
+#endif
 
-    // Validate the HDOP value actually selected above.
-    if (p.HDOP == 0) {
-        LOG_WARN("BOGUS HDOP REJECTED: %u", p.HDOP);
+    // Discard incomplete or erroneous readings
+    if (reader.hdop.value() == 0) {
+        LOG_WARN("BOGUS hdop.value() REJECTED: %d", reader.hdop.value());
         return false;
     }
 
@@ -2223,22 +2239,26 @@ bool GPS::lookForLocation()
     p.altitude = reader.altitude.meters();
 
     p.fix_quality = fixQual;
-    p.fix_type = parsedFixType;
+#ifndef TINYGPS_OPTION_NO_CUSTOM_FIELDS
+    p.fix_type = fixType;
+#endif
 
     LOG_DEBUG_GPS("GNSS used=%u tracked=%u view=%u GPS=%u GLO=%u BDS=%u GGA=%u fixType=%u PDOP=%u HDOP=%u VDOP=%u",
                   reader.gsaSatellitesUsedTotal(), reader.satellitesTracked(), reader.satellitesInView(),
                   reader.gsaSatellitesUsed(TINYGPS_GNSS_GPS), reader.gsaSatellitesUsed(TINYGPS_GNSS_GLONASS),
                   reader.gsaSatellitesUsed(TINYGPS_GNSS_BEIDOU),
                   reader.satellites.isValid() ? reader.satellites.value() : 0,
-                  parsedFixType, reader.gsaPDOP(), reader.gsaHDOP(), reader.gsaVDOP());
+                  reader.gsaFixType(), reader.gsaPDOP(), reader.gsaHDOP(), reader.gsaVDOP());
 
     if (reader.hasValidGLL()) {
-        LOG_DEBUG_GPS("GLL lat=%.7f lon=%.7f status=%c mode=%c", reader.gllLocation.lat(), reader.gllLocation.lng(),
+        LOG_DEBUG_GPS("GLL lat=%.7f lon=%.7f status=%c mode=%c",
+                      reader.gllLocation.lat(), reader.gllLocation.lng(),
                       reader.gllInfo.status, reader.gllInfo.mode);
     }
 
     if (reader.hasValidZDA()) {
-        LOG_DEBUG_GPS("ZDA date=%04u-%02u-%02u", reader.zdaInfo.year, reader.zdaInfo.month, reader.zdaInfo.day);
+        LOG_DEBUG_GPS("ZDA date=%04u-%02u-%02u",
+                      reader.zdaInfo.year, reader.zdaInfo.month, reader.zdaInfo.day);
     }
 
     if (reader.antInfo.valid) {
@@ -2263,6 +2283,14 @@ bool GPS::lookForLocation()
     t.tm_isdst = false;
     p.timestamp = gm_mktime(&t);
 
+    // Nice to have, if available
+    // Prefer true GSV satellites-in-view; use GGA only until GSV is available.
+    const uint16_t satsInView = reader.satellitesInView();
+    if (satsInView > 0)
+        p.sats_in_view = satsInView;
+    else if (reader.satellites.isUpdated())
+        p.sats_in_view = reader.satellites.value();
+
     if (reader.course.isUpdated() && reader.course.isValid()) {
         if (reader.course.value() < 36000) { // sanity check
             p.ground_track =
@@ -2281,12 +2309,12 @@ bool GPS::lookForLocation()
 
 bool GPS::hasLock()
 {
-    // GGA fix quality must indicate a valid solution.
+    // Using GPGGA fix quality indicator
     if (fixQual >= 1 && fixQual <= 5) {
-        // Native GSA fix type: 1=no fix, 2=2D, 3=3D.
-        // Zero means no GSA fix type has been received yet, so trust GGA.
-        const uint8_t parsedFixType = reader.gsaFixType();
-        if (parsedFixType == 3 || parsedFixType == 2 || parsedFixType == 0)
+#ifndef TINYGPS_OPTION_NO_CUSTOM_FIELDS
+        // Use GPGSA fix type 2D/3D (better) if available
+        if (fixType == 3 || fixtype ==2 || fixType == 0) // zero means "no data received"
+#endif
             return true;
     }
 
