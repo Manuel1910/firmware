@@ -2141,28 +2141,9 @@ bool GPS::lookForTime()
  */
 bool GPS::lookForLocation()
 {
-    // GGA provides fix quality, but this TinyGPS++ build does not expose the
-    // parsed fix-quality value directly. Generate the canonical GGA sentence and
-    // parse the fix-quality field from it instead.
-    fixQual = 0;
-    char ggaSentence[128];
-    const int ggaLen = reader.GGA(ggaSentence);
-    (void)ggaLen;
-
-    char *field = strchr(ggaSentence, ',');
-    if (field) {
-        field = strchr(field + 1, ',');
-        for (int i = 0; i < 5 && field; ++i) {
-            field = strchr(field + 1, ',');
-        }
-        if (field) {
-            char *start = field + 1;
-            char *end = strchr(start, ',');
-            if (end)
-                *end = '\0';
-            fixQual = static_cast<uint8_t>(atoi(start));
-        }
-    }
+    // TinyGPS++ already parses the GGA fix-quality field into fixQ.
+    // Use the public getter directly instead of regenerating/parsing a GGA string.
+    fixQual = reader.fixQuality();
 
     const uint8_t parsedFixType = reader.gsaFixType();
 
