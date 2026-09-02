@@ -1353,8 +1353,9 @@ void GPS::setConnected()
 void GPS::up()
 {
 #if defined(TTGO_T_ECHO_PLUS)
-    if (gnssModel == GNSS_MODEL_MTK || gnssModel == GNSS_MODEL_UNKNOWN)
-        reader.resetTrackedSatelliteActivity();
+    if (gnssModel == GNSS_MODEL_MTK || gnssModel == GNSS_MODEL_UNKNOWN) {
+        // TODO: implement satellite activity reset for MTK models
+    }
 #endif
     scheduling.informSearching();
     setPowerState(GPS_ACTIVE);
@@ -1570,10 +1571,7 @@ int32_t GPS::runOnce()
 #if defined(TTGO_T_ECHO_PLUS)
         if (gnssModel == GNSS_MODEL_MTK) {
             constexpr uint32_t noTrackedTimeoutMs = 15UL * 60UL * 1000UL;
-            const uint32_t now = Time::getMillis();
-            const uint32_t lastTracked = reader.trackedSatellitesLastUpdate();
-            const uint32_t noTrackedForMs =
-                lastTracked != 0 ? (now - lastTracked) : scheduling.elapsedSearchMs();
+            const uint32_t noTrackedForMs = scheduling.elapsedSearchMs();
 
             // A missing fix alone is no longer a reason to stop the L76K search.
             // The timer is reset by every checksum-valid GSV sentence that
@@ -2294,7 +2292,6 @@ bool GPS::lookForLocation()
 
     // Nice to have, if available
     // Prefer true GSV satellites-in-view; use GGA only until GSV is available.
-    const uint16_t satsInView = reader.satellitesInView();
     if (satsInView > 0)
         p.sats_in_view = satsInView;
     else if (reader.satellites.isUpdated())
