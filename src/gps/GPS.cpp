@@ -1352,7 +1352,7 @@ void GPS::setConnected()
 // We want a GPS lock. Wake the hardware
 void GPS::up()
 {
-#if defined(TTGO_T_ECHO_PLUS)
+#if defined(TTGO_T_ECHO_PLUS_inkHud2)
     if (gnssModel == GNSS_MODEL_MTK || gnssModel == GNSS_MODEL_UNKNOWN) {
         // TODO: implement satellite activity reset for MTK models
     }
@@ -1585,7 +1585,7 @@ int32_t GPS::runOnce()
 #endif
 
         if (tooLong && !gotLoc) {
-#if defined(TTGO_T_ECHO_PLUS)
+#if defined(TTGO_T_ECHO_PLUS_inkHud2)
             if (gnssModel == GNSS_MODEL_MTK)
                 LOG_WARN("L76K: no tracked satellites for 15 minutes; ending GPS search");
             else
@@ -2258,14 +2258,12 @@ bool GPS::lookForLocation()
                   parsedFixType, reader.gsaPDOP(), reader.gsaHDOP(), reader.gsaVDOP());
 
     if (reader.hasValidGLL()) {
-        LOG_DEBUG_GPS("GLL lat=%.7f lon=%.7f status=%c mode=%c",
-                      reader.gllLocation.lat(), reader.gllLocation.lng(),
+        LOG_DEBUG_GPS("GLL lat=%.7f lon=%.7f status=%c mode=%c", reader.gllLocation.lat(), reader.gllLocation.lng(),
                       reader.gllInfo.status, reader.gllInfo.mode);
     }
 
     if (reader.hasValidZDA()) {
-        LOG_DEBUG_GPS("ZDA date=%04u-%02u-%02u",
-                      reader.zdaInfo.year, reader.zdaInfo.month, reader.zdaInfo.day);
+        LOG_DEBUG_GPS("ZDA date=%04u-%02u-%02u", reader.zdaInfo.year, reader.zdaInfo.month, reader.zdaInfo.day);
     }
 
     if (reader.antInfo.valid) {
@@ -2319,7 +2317,7 @@ bool GPS::hasLock()
     if (fixQual >= 1 && fixQual <= 5) {
 #ifndef TINYGPS_OPTION_NO_CUSTOM_FIELDS
         // Use GPGSA fix type 2D/3D (better) if available
-        if (fixType == 3 || fixType ==2 || fixType == 0) // zero means "no data received"
+        if (fixType == 3 || fixType == 2 || fixType == 0) // zero means "no data received"
 #endif
             return true;
     }
