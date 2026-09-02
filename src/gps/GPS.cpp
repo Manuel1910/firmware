@@ -2322,7 +2322,7 @@ bool GPS::hasLock()
     if (fixQual >= 1 && fixQual <= 5) {
 #ifndef TINYGPS_OPTION_NO_CUSTOM_FIELDS
         // Use GPGSA fix type 2D/3D (better) if available
-        if (fixType == 3 || fixtype ==2 || fixType == 0) // zero means "no data received"
+        if (fixType == 3 || fixType ==2 || fixType == 0) // zero means "no data received"
 #endif
             return true;
     }
