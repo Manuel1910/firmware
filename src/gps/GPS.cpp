@@ -2143,7 +2143,7 @@ bool GPS::lookForLocation()
     // Use the public getter directly instead of regenerating/parsing a GGA string.
     fixQual = reader.fixQuality();
 
-    const uint8_t parsedFixType = fixType = reader.gsaFixType();
+    const uint8_t parsedFixType = reader.gsaFixType();
 
     // Satellite visibility is status information, not proof of a valid
     // position fix. Update it before any of the early returns below so the
@@ -2248,7 +2248,7 @@ bool GPS::lookForLocation()
 
     p.fix_quality = fixQual;
 #ifndef TINYGPS_OPTION_NO_CUSTOM_FIELDS
-    p.fix_type = fixType;
+    p.fix_type = parsedFixType;
 #endif
 
     LOG_DEBUG_GPS("GNSS used=%u tracked=%u view=%u GPS=%u GLO=%u BDS=%u GGA=%u fixType=%u PDOP=%u HDOP=%u VDOP=%u",
@@ -2316,7 +2316,8 @@ bool GPS::hasLock()
     // Using GPGGA fix quality indicator
     if (fixQual >= 1 && fixQual <= 5) {
 #ifndef TINYGPS_OPTION_NO_CUSTOM_FIELDS
-        // Use GPGSA fix type 2D/3D (better) if available
+        // Use the GSA fix type parsed directly by TinyGPS++.
+        const uint8_t fixType = reader.gsaFixType();
         if (fixType == 3 || fixType == 2 || fixType == 0) // zero means "no data received"
 #endif
             return true;
