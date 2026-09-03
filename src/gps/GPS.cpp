@@ -2143,7 +2143,7 @@ bool GPS::lookForLocation()
     // Use the public getter directly instead of regenerating/parsing a GGA string.
     fixQual = reader.fixQuality();
 
-    const uint8_t parsedFixType = reader.gsaFixType();
+    const uint8_t parsedFixType = fixType = reader.gsaFixType();
 
     // Satellite visibility is status information, not proof of a valid
     // position fix. Update it before any of the early returns below so the
