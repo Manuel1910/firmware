@@ -2201,18 +2201,6 @@ bool GPS::lookForLocation()
         }
     }
 
-#ifndef TINYGPS_OPTION_NO_STATISTICS
-    if (reader.failedChecksum() > lastChecksumFailCount) {
-// In a GPS_DEBUG build we want to log all of these. In production, we only care if there are many of them.
-#if !GPS_DEBUG
-        if (reader.failedChecksum() > 4)
-#endif
-            LOG_WARN("%u new GPS checksum failures, total %u", reader.failedChecksum() - lastChecksumFailCount,
-                     reader.failedChecksum());
-        lastChecksumFailCount = reader.failedChecksum();
-    }
-#endif
-
     // check if GPS has an acceptable lock
     if (!hasLock())
         return false;
