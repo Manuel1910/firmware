@@ -703,7 +703,9 @@ bool GPS::verifyCachedProbePresence()
         cachedProbeModelName = "L76K/MTK";
         _serial_gps->write("$PCAS06,0*1B\r\n");
         present = (getACK("$GPTXT,01,01,02,SW=", 700) == GNSS_RESPONSE_OK);
-        _serial_gps->write("$PCAS01,5*19\r\n");
+        // Do not change the L76K baud rate while merely validating the cache.
+        // A baud-rate change is performed centrally in setup() so that the
+        // GNSS module and the MCU UART always switch together.
         break;
     case GNSS_MODEL_MTK_L76B:
         cachedProbeModelName = "L76B";
@@ -846,8 +848,53 @@ bool GPS::setup()
         if (gnssModel == GNSS_MODEL_MTK) {
             /*
              * t-beam-s3-core uses the same L76K GNSS module as t-echo.
-             * Unlike t-echo, L76K uses 9600 baud rate for communication by default.
-             * */
+             * Some L76K variants start at 9600 baud. Run the module at 115200
+             * after detection, but switch the GNSS and the MCU UART as one
+             * controlled operation.
+             */
+
+            constexpr int32_t L76K_TARGET_BAUD = 115200;
+            if (detectedBaud != L76K_TARGET_BAUD) {
+                const int32_t previousBaud = detectedBaud;
+                LOG_INFO("Switching L76K baud from %d to %d", previousBaud, L76K_TARGET_BAUD);
+
+                // PCAS01 parameter 5 selects 115200 baud on the L76K.
+                // Wait until the complete command has left the MCU before
+                // changing the host UART speed.
+                clearBuffer();
+                _serial_gps->write("$PCAS01,5*19\r\n");
+                _serial_gps->flush();
+                delay(100);
+
+#if defined(ARCH_NRF52) || defined(ARCH_PORTDUINO) || defined(ARCH_STM32)
+                _serial_gps->end();
+                _serial_gps->begin(L76K_TARGET_BAUD);
+#elif defined(ARCH_RP2040)
+                _serial_gps->end();
+                _serial_gps->setFIFOSize(256);
+                _serial_gps->begin(L76K_TARGET_BAUD);
+#else
+                _serial_gps->updateBaudRate(L76K_TARGET_BAUD);
+#endif
+                detectedBaud = L76K_TARGET_BAUD;
+                delay(150);
+                clearBuffer();
+
+                // Verify that the L76K answers at the new speed. PCAS06 is an
+                // active version query and works even if periodic NMEA output
+                // was disabled during probing.
+                _serial_gps->write("$PCAS06,0*1B\r\n");
+                if (getACK("$GPTXT,01,01,02,SW=", 1000) == GNSS_RESPONSE_OK) {
+                    LOG_INFO("L76K baud switch confirmed at %d", L76K_TARGET_BAUD);
+                } else {
+                    LOG_WARN("L76K did not confirm baud switch at %d; continuing at target baud", L76K_TARGET_BAUD);
+                }
+
+                // setup() saved the probe result before model-specific setup.
+                // Rewrite the cache so the next boot probes the L76K directly
+                // at the new baud rate instead of the old detected speed.
+                (void)saveProbeCache();
+            }
 
             // Initialize the L76K Chip, use GPS + GLONASS + BEIDOU
             _serial_gps->write("$PCAS04,7*1E\r\n");
@@ -2294,7 +2341,6 @@ bool GPS::lookForLocation()
             antenna = "OPEN";
         else if (reader.antInfo.status == TINYGPS_ANT_SHORT)
             antenna = "SHORT";
-        (void)antenna;
         LOG_DEBUG_GPS("L76K antenna=%s", antenna);
     }
 
