@@ -9,7 +9,6 @@ namespace graphics
 {
 namespace SatellitesRenderer
 {
-
 static const char *systemName(uint8_t s)
 {
     switch (s) {
@@ -48,6 +47,7 @@ void drawFrame(OLEDDisplay *display, OLEDDisplayUiState *, int16_t x, int16_t y)
              (unsigned)gps->getSatellitesUsedBySystem(TINYGPS_GNSS_GLONASS),
              (unsigned)gps->getSatellitesUsedBySystem(TINYGPS_GNSS_BEIDOU));
     display->drawString(x + 2, y + 14, systems);
+
     display->drawString(x + 2, y + 28, "SYS ID EL  AZ  SNR");
     display->drawHorizontalLine(x + 2, y + 44, w - 4);
 
@@ -56,8 +56,10 @@ void drawFrame(OLEDDisplay *display, OLEDDisplayUiState *, int16_t x, int16_t y)
     const TinyGPSTrackedSattelites *visible[TINYGPS_MAX_SATS];
     size_t count = 0;
 
+    // Only render satellites from a recent, checksum-valid GSV sentence.
+    // Old GSV rows must not remain frozen on the E-Ink page indefinitely.
     for (size_t i = 0; i < capacity && count < TINYGPS_MAX_SATS; ++i) {
-        if (sats[i].prn != 0) {
+        if (gps->isTrackedSatelliteFresh(sats[i])) {
             visible[count++] = &sats[i];
         }
     }
@@ -81,7 +83,6 @@ void drawFrame(OLEDDisplay *display, OLEDDisplayUiState *, int16_t x, int16_t y)
             snprintf(row, sizeof(row), "%-3s %3u %2u %3u  --", systemName(visible[i]->system), (unsigned)visible[i]->prn,
                      (unsigned)visible[i]->elevation, (unsigned)visible[i]->azimuth);
         }
-
         display->drawString(x + 2, yy, row);
         yy += 12;
     }

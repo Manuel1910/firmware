@@ -531,7 +531,7 @@ void UIRenderer::drawGps(OLEDDisplay *display, int16_t x, int16_t y, const mesht
         snprintf(textString, sizeof(textString), "GPS off");
     } else if (!gps || !gps->getIsConnected()) {
         snprintf(textString, sizeof(textString), "No Lock");
-    } else if (!gps->getHasLock()) {
+    } else if (gps->getNumSatellites() == 0) {
         snprintf(textString, sizeof(textString), "No Sats");
     } else {
         snprintf(textString, sizeof(textString), "%u sats", gps->getNumSatellites());

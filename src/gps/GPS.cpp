@@ -858,42 +858,76 @@ bool GPS::setup()
                 const int32_t previousBaud = detectedBaud;
                 LOG_INFO("Switching L76K baud from %d to %d", previousBaud, L76K_TARGET_BAUD);
 
+                auto setHostBaud = [&](int32_t baud) {
+#if defined(ARCH_NRF52) || defined(ARCH_PORTDUINO) || defined(ARCH_STM32)
+                    _serial_gps->end();
+                    _serial_gps->begin(baud);
+#elif defined(ARCH_RP2040)
+                    _serial_gps->end();
+                    _serial_gps->setFIFOSize(256);
+                    _serial_gps->begin(baud);
+#else
+                    _serial_gps->updateBaudRate(baud);
+#endif
+                };
+
                 // PCAS01 parameter 5 selects 115200 baud on the L76K.
-                // Wait until the complete command has left the MCU before
-                // changing the host UART speed.
+                // flush() guarantees that the complete command leaves the MCU
+                // before the host UART itself changes speed.
                 clearBuffer();
                 _serial_gps->write("$PCAS01,5*19\r\n");
                 _serial_gps->flush();
                 delay(100);
 
-#if defined(ARCH_NRF52) || defined(ARCH_PORTDUINO) || defined(ARCH_STM32)
-                _serial_gps->end();
-                _serial_gps->begin(L76K_TARGET_BAUD);
-#elif defined(ARCH_RP2040)
-                _serial_gps->end();
-                _serial_gps->setFIFOSize(256);
-                _serial_gps->begin(L76K_TARGET_BAUD);
-#else
-                _serial_gps->updateBaudRate(L76K_TARGET_BAUD);
-#endif
-                detectedBaud = L76K_TARGET_BAUD;
+                setHostBaud(L76K_TARGET_BAUD);
                 delay(150);
                 clearBuffer();
 
-                // Verify that the L76K answers at the new speed. PCAS06 is an
-                // active version query and works even if periodic NMEA output
-                // was disabled during probing.
-                _serial_gps->write("$PCAS06,0*1B\r\n");
-                if (getACK("$GPTXT,01,01,02,SW=", 1000) == GNSS_RESPONSE_OK) {
-                    LOG_INFO("L76K baud switch confirmed at %d", L76K_TARGET_BAUD);
-                } else {
-                    LOG_WARN("L76K did not confirm baud switch at %d; continuing at target baud", L76K_TARGET_BAUD);
+                // PCAS06 is usable even though probing temporarily disabled the
+                // periodic NMEA output. Retry once because the receiver may
+                // still be settling after the UART change.
+                bool targetConfirmed = false;
+                for (uint8_t attempt = 0; attempt < 2 && !targetConfirmed; ++attempt) {
+                    clearBuffer();
+                    _serial_gps->write("$PCAS06,0*1B\r\n");
+                    targetConfirmed = (getACK("$GPTXT,01,01,02,SW=", 1000) == GNSS_RESPONSE_OK);
+                    if (!targetConfirmed)
+                        delay(100);
                 }
 
-                // setup() saved the probe result before model-specific setup.
-                // Rewrite the cache so the next boot probes the L76K directly
-                // at the new baud rate instead of the old detected speed.
-                (void)saveProbeCache();
+                if (targetConfirmed) {
+                    detectedBaud = L76K_TARGET_BAUD;
+                    LOG_INFO("L76K baud switch confirmed at %d", L76K_TARGET_BAUD);
+
+                    // setup() saved the old probe baud before model-specific
+                    // setup. Replace it only after the new speed is proven.
+                    (void)saveProbeCache();
+                } else {
+                    // Do not permanently cache an unverified baud. Check the
+                    // original speed: if it answers there, the PCAS01 command
+                    // did not take effect and setup can safely continue there.
+                    LOG_WARN("L76K did not confirm %d baud; checking previous baud %d", L76K_TARGET_BAUD, previousBaud);
+                    setHostBaud(previousBaud);
+                    delay(150);
+                    clearBuffer();
+                    _serial_gps->write("$PCAS06,0*1B\r\n");
+                    const bool previousConfirmed = (getACK("$GPTXT,01,01,02,SW=", 1000) == GNSS_RESPONSE_OK);
+
+                    if (previousConfirmed) {
+                        detectedBaud = previousBaud;
+                        LOG_WARN("L76K remained at %d baud; continuing without a false 115200 cache entry", previousBaud);
+                        (void)saveProbeCache();
+                    } else {
+                        // Neither speed could be positively verified. Keep the
+                        // host at the requested target for this boot, but force
+                        // a full probe on the next boot instead of persisting a
+                        // possibly wrong baud.
+                        setHostBaud(L76K_TARGET_BAUD);
+                        detectedBaud = L76K_TARGET_BAUD;
+                        clearProbeCache();
+                        LOG_WARN("L76K baud state is unverified; cache cleared so next boot performs a full probe");
+                    }
+                }
             }
 
             // Initialize the L76K Chip, use GPS + GLONASS + BEIDOU
@@ -2134,10 +2168,9 @@ bool GPS::lookForTime()
         t.tm_year = d.year() - 1900;
         t.tm_isdst = false;
 
-        if (t.tm_mon > -1 && isPlausibleNmeaTime(t) &&
-            perhapsSetRTC(RTCQualityGPS, t) == RTCSetResultSuccess) {
-            LOG_DEBUG("NMEA GPS time set %02d-%02d-%02d %02d:%02d:%02d age %d",
-                      d.year(), d.month(), t.tm_mday, t.tm_hour, t.tm_min, t.tm_sec, ti.age());
+        if (t.tm_mon > -1 && isPlausibleNmeaTime(t) && perhapsSetRTC(RTCQualityGPS, t) == RTCSetResultSuccess) {
+            LOG_DEBUG("NMEA GPS time set %02d-%02d-%02d %02d:%02d:%02d age %d", d.year(), d.month(), t.tm_mday, t.tm_hour,
+                      t.tm_min, t.tm_sec, ti.age());
             return true;
         }
     }
@@ -2153,11 +2186,9 @@ bool GPS::lookForTime()
         t.tm_year = reader.zdaInfo.year - 1900;
         t.tm_isdst = false;
 
-        if (isPlausibleNmeaTime(t) &&
-            perhapsSetRTC(RTCQualityGPS, t) == RTCSetResultSuccess) {
-            LOG_DEBUG("ZDA GPS time set %04u-%02u-%02u %02d:%02d:%02d",
-                      reader.zdaInfo.year, reader.zdaInfo.month, reader.zdaInfo.day,
-                      t.tm_hour, t.tm_min, t.tm_sec);
+        if (isPlausibleNmeaTime(t) && perhapsSetRTC(RTCQualityGPS, t) == RTCSetResultSuccess) {
+            LOG_DEBUG("ZDA GPS time set %04u-%02u-%02u %02d:%02d:%02d", reader.zdaInfo.year, reader.zdaInfo.month,
+                      reader.zdaInfo.day, t.tm_hour, t.tm_min, t.tm_sec);
             return true;
         }
     }
@@ -2184,35 +2215,36 @@ bool GPS::lookForLocation()
     // while another validation check rejects the current position solution.
     // Prefer the true GSV satellites-in-view count and fall back to GGA.
     //
-    // IMPORTANT: TinyGPSDatum::value() clears the isUpdated() flag. Capture
-    // freshness before reading the value so an old GGA value cannot later be
-    // mistaken for a new "0 satellites" report.
-    const uint16_t satsInView = reader.satellitesInView();
+    // TinyGPS++ age-checks GSV/GSA internally. GGA has its own
+    // TinyGPSDatum timestamp, so require that value to be fresh as well.
+    constexpr uint32_t SATELLITE_SOURCE_MAX_AGE_MS = TinyGPSPlus::AUX_DATA_MAX_AGE_MS;
+    const uint32_t gsvAge = reader.gsvAge();
+    const bool gsvFresh = gsvAge <= SATELLITE_SOURCE_MAX_AGE_MS;
+    const uint16_t satsInView = gsvFresh ? reader.satellitesInView() : 0;
+
     const bool ggaSatsValid = reader.satellites.isValid();
-    const bool ggaSatsUpdated = reader.satellites.isUpdated();
-    const uint16_t ggaSats = ggaSatsValid ? reader.satellites.value() : 0;
+    const uint32_t ggaSatsAge = ggaSatsValid ? reader.satellites.age() : static_cast<uint32_t>(ULONG_MAX);
+    const bool ggaSatsFresh = ggaSatsValid && ggaSatsAge <= SATELLITE_SOURCE_MAX_AGE_MS;
+    const uint16_t ggaSats = ggaSatsFresh ? reader.satellites.value() : 0;
 
     uint16_t reportedSats = 0;
     bool havePositiveSatelliteCount = false;
 
-    if (satsInView > 0) {
-        // GSV is the authoritative source for satellites actually in view.
+    if (gsvFresh && satsInView > 0) {
+        // Fresh GSV is authoritative for satellites actually in view.
         reportedSats = satsInView;
         havePositiveSatelliteCount = true;
-    } else if (ggaSatsValid && ggaSats > 0) {
-        // GGA reports satellites used by the fix. It is a useful fallback
-        // while a complete GSV cycle is not currently available.
+    } else if (ggaSatsFresh && ggaSats > 0) {
+        // Fresh GGA is a fallback when a complete/current GSV snapshot is not
+        // available. Never reuse an old positive GGA count indefinitely.
         reportedSats = ggaSats;
         havePositiveSatelliteCount = true;
     }
 
-    // Satellite status comes only from fresh TinyGPS++ parser data.
-    //
-    // A stale GGA value of zero must NEVER start or complete the timeout.
-    // "No Sats" is published only after TinyGPS++ repeatedly receives fresh
-    // GGA reports with zero satellites for the full timeout period while GSV
-    // also contains no visible satellites. This prevents a temporary GSV
-    // cycle boundary or an old GGA zero from clearing a valid display.
+    // Do not let an old GSV/GGA snapshot remain on screen forever. During a
+    // continuous ACTIVE sampling window, 15 seconds without any positive,
+    // fresh satellite source confirms that the previous count is obsolete.
+    // GPS sleep/off gaps reset this timer so power-saving time is not counted.
     constexpr uint32_t SATELLITE_DATA_TIMEOUT_MS = 15000;
     constexpr uint32_t SATELLITE_POLL_GAP_RESET_MS = 2000;
 
@@ -2222,10 +2254,7 @@ bool GPS::lookForLocation()
 
     const uint32_t satelliteNowMs = Time::getMillis();
 
-    if (lastSatellitePollMs == 0 ||
-        (uint32_t)(satelliteNowMs - lastSatellitePollMs) > SATELLITE_POLL_GAP_RESET_MS) {
-        // New active sampling window. Do not count GPS sleep/off time toward
-        // the missing-satellite timeout.
+    if (lastSatellitePollMs == 0 || (uint32_t)(satelliteNowMs - lastSatellitePollMs) > SATELLITE_POLL_GAP_RESET_MS) {
         satelliteMissingSinceMs = 0;
     }
     lastSatellitePollMs = satelliteNowMs;
@@ -2237,21 +2266,19 @@ bool GPS::lookForLocation()
         if (p.sats_in_view != reportedSats) {
             p.sats_in_view = reportedSats;
             shouldPublish = true;
-            LOG_DEBUG_GPS("Satellite status updated from TinyGPS++: GSV=%u GGA=%u shown=%u", satsInView, ggaSats,
-                          p.sats_in_view);
+            LOG_DEBUG_GPS("Satellite status updated: GSV=%u(age=%u) GGA=%u(age=%u) shown=%u", satsInView, gsvAge, ggaSats,
+                          ggaSatsAge, p.sats_in_view);
         }
-    } else if (hadSatelliteData && ggaSatsUpdated && ggaSatsValid && ggaSats == 0) {
-        // This is an explicit, NEW TinyGPS++ GGA report saying that no
-        // satellites are currently used. Only fresh zero reports are allowed
-        // to advance the timeout.
+    } else if (hadSatelliteData) {
         if (satelliteMissingSinceMs == 0) {
             satelliteMissingSinceMs = satelliteNowMs;
-            LOG_DEBUG_GPS("Fresh TinyGPS++ zero-satellite report; starting No Sats timeout");
+            LOG_DEBUG_GPS("No positive fresh satellite source; starting No Sats timeout (GSV age=%u GGA age=%u)", gsvAge,
+                          ggaSatsAge);
         } else if ((uint32_t)(satelliteNowMs - satelliteMissingSinceMs) >= SATELLITE_DATA_TIMEOUT_MS) {
             if (p.sats_in_view != 0) {
                 p.sats_in_view = 0;
                 shouldPublish = true;
-                LOG_DEBUG_GPS("Satellite status confirmed by fresh TinyGPS++ data: No Sats");
+                LOG_DEBUG_GPS("Satellite data stale/zero for %ums: No Sats", SATELLITE_DATA_TIMEOUT_MS);
             }
         }
     }
@@ -2320,8 +2347,7 @@ bool GPS::lookForLocation()
     LOG_DEBUG_GPS("GNSS used=%u tracked=%u view=%u GPS=%u GLO=%u BDS=%u GGA=%u fixType=%u PDOP=%u HDOP=%u VDOP=%u",
                   reader.gsaSatellitesUsedTotal(), reader.satellitesTracked(), reader.satellitesInView(),
                   reader.gsaSatellitesUsed(TINYGPS_GNSS_GPS), reader.gsaSatellitesUsed(TINYGPS_GNSS_GLONASS),
-                  reader.gsaSatellitesUsed(TINYGPS_GNSS_BEIDOU),
-                  reader.satellites.isValid() ? reader.satellites.value() : 0,
+                  reader.gsaSatellitesUsed(TINYGPS_GNSS_BEIDOU), reader.satellites.isValid() ? reader.satellites.value() : 0,
                   parsedFixType, reader.gsaPDOP(), reader.gsaHDOP(), reader.gsaVDOP());
 
     if (reader.hasValidGLL()) {

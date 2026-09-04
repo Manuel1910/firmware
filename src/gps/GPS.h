@@ -144,6 +144,7 @@ class GPS : private concurrency::OSThread
     // Multi-GNSS diagnostics.
     const TinyGPSTrackedSattelites *getTrackedSatellites() const { return reader.trackedSatellites; }
     size_t getTrackedSatelliteCapacity() const { return TINYGPS_MAX_SATS; }
+    bool isTrackedSatelliteFresh(const TinyGPSTrackedSattelites &sat) const { return reader.isTrackedSatelliteFresh(sat); }
 
     uint16_t getSatellitesUsed() const { return reader.gsaSatellitesUsedTotal(); }
     uint16_t getSatellitesTracked() const { return reader.satellitesTracked(); }
