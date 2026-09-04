@@ -2294,6 +2294,7 @@ bool GPS::lookForLocation()
             antenna = "OPEN";
         else if (reader.antInfo.status == TINYGPS_ANT_SHORT)
             antenna = "SHORT";
+        (void)antenna;
         LOG_DEBUG_GPS("L76K antenna=%s", antenna);
     }
 
