@@ -852,7 +852,8 @@ bool GPS::setup()
             // Initialize the L76K Chip, use GPS + GLONASS + BEIDOU
             _serial_gps->write("$PCAS04,7*1E\r\n");
             delay(250);
-            // only ask for RMC and GGA
+            // Keep the extended L76K NMEA set enabled. In PCAS03 the fourth
+            // field is nGSV, so this command already enables GSV once per fix.
             _serial_gps->write("$PCAS03,1,1,1,1,1,1,1,1,0,0,,,0,0*02\r\n");
             delay(250);
             // Switch to Vehicle Mode, since SoftRF enables Aviation < 2g
@@ -1582,9 +1583,11 @@ int32_t GPS::runOnce()
         // Hold has expired , Search time has expired, we got a time only, or we never needed to hold.
         bool holdExpired = holdJustExpired(fixHoldEnds);
         if (shouldPublish || tooLong || holdExpired) {
-            // Satellite changes set shouldPublish directly in lookForLocation().
-            // Do not repeatedly republish an old positive satellite count here.
-            if (gotTime && hasValidLocation) {
+            // At the end of every scheduled GPS update window, also publish
+            // the current satellite status when TinyGPS++ has previously
+            // supplied a positive count. This keeps GPSStatus/Base UI in sync
+            // even if there is no new position fix in this particular window.
+            if ((gotTime && hasValidLocation) || p.sats_in_view > 0) {
                 shouldPublish = true;
             }
             if (shouldPublish) {
@@ -2133,68 +2136,76 @@ bool GPS::lookForLocation()
     // Base UI can show satellites while the receiver is still acquiring or
     // while another validation check rejects the current position solution.
     // Prefer the true GSV satellites-in-view count and fall back to GGA.
+    //
+    // IMPORTANT: TinyGPSDatum::value() clears the isUpdated() flag. Capture
+    // freshness before reading the value so an old GGA value cannot later be
+    // mistaken for a new "0 satellites" report.
     const uint16_t satsInView = reader.satellitesInView();
+    const bool ggaSatsValid = reader.satellites.isValid();
+    const bool ggaSatsUpdated = reader.satellites.isUpdated();
+    const uint16_t ggaSats = ggaSatsValid ? reader.satellites.value() : 0;
+
     uint16_t reportedSats = 0;
-    bool haveSatelliteCount = false;
+    bool havePositiveSatelliteCount = false;
 
     if (satsInView > 0) {
+        // GSV is the authoritative source for satellites actually in view.
         reportedSats = satsInView;
-        haveSatelliteCount = true;
-    } else if (reader.satellites.isValid()) {
-        reportedSats = reader.satellites.value();
-        haveSatelliteCount = true;
+        havePositiveSatelliteCount = true;
+    } else if (ggaSatsValid && ggaSats > 0) {
+        // GGA reports satellites used by the fix. It is a useful fallback
+        // while a complete GSV cycle is not currently available.
+        reportedSats = ggaSats;
+        havePositiveSatelliteCount = true;
     }
 
-    // Satellite status comes only from TinyGPS++.
-    // Short GSV/GGA gaps must not immediately turn the UI into "No Sats".
-    // Count only time while GPS is actively being sampled. Long gaps between
-    // calls (GPS sleep / scheduler interval) are deliberately not counted as
-    // missing satellite data.
+    // Satellite status comes only from fresh TinyGPS++ parser data.
+    //
+    // A stale GGA value of zero must NEVER start or complete the timeout.
+    // "No Sats" is published only after TinyGPS++ repeatedly receives fresh
+    // GGA reports with zero satellites for the full timeout period while GSV
+    // also contains no visible satellites. This prevents a temporary GSV
+    // cycle boundary or an old GGA zero from clearing a valid display.
     constexpr uint32_t SATELLITE_DATA_TIMEOUT_MS = 15000;
-    constexpr uint32_t SATELLITE_ACTIVE_POLL_MAX_GAP_MS = 2000;
+    constexpr uint32_t SATELLITE_POLL_GAP_RESET_MS = 2000;
 
     static uint32_t lastSatellitePollMs = 0;
-    static uint32_t satelliteMissingActiveMs = 0;
+    static uint32_t satelliteMissingSinceMs = 0;
     static bool hadSatelliteData = false;
 
     const uint32_t satelliteNowMs = Time::getMillis();
-    uint32_t activePollDeltaMs = 0;
 
-    if (lastSatellitePollMs != 0) {
-        const uint32_t pollDeltaMs = (uint32_t)(satelliteNowMs - lastSatellitePollMs);
-        if (pollDeltaMs <= SATELLITE_ACTIVE_POLL_MAX_GAP_MS) {
-            activePollDeltaMs = pollDeltaMs;
-        }
+    if (lastSatellitePollMs == 0 ||
+        (uint32_t)(satelliteNowMs - lastSatellitePollMs) > SATELLITE_POLL_GAP_RESET_MS) {
+        // New active sampling window. Do not count GPS sleep/off time toward
+        // the missing-satellite timeout.
+        satelliteMissingSinceMs = 0;
     }
     lastSatellitePollMs = satelliteNowMs;
 
-    if (haveSatelliteCount && reportedSats > 0) {
+    if (havePositiveSatelliteCount) {
         hadSatelliteData = true;
-        satelliteMissingActiveMs = 0;
+        satelliteMissingSinceMs = 0;
 
         if (p.sats_in_view != reportedSats) {
             p.sats_in_view = reportedSats;
             shouldPublish = true;
-            LOG_DEBUG_GPS("Satellite status updated from TinyGPS++: view=%u", p.sats_in_view);
+            LOG_DEBUG_GPS("Satellite status updated from TinyGPS++: GSV=%u GGA=%u shown=%u", satsInView, ggaSats,
+                          p.sats_in_view);
         }
-    } else if (hadSatelliteData) {
-        // TinyGPS++ currently has no positive satellite data. Accumulate only
-        // active polling time; GPS sleep does not advance this timeout.
-        if (satelliteMissingActiveMs < SATELLITE_DATA_TIMEOUT_MS) {
-            satelliteMissingActiveMs += activePollDeltaMs;
-            if (satelliteMissingActiveMs > SATELLITE_DATA_TIMEOUT_MS)
-                satelliteMissingActiveMs = SATELLITE_DATA_TIMEOUT_MS;
-        }
-
-        if (satelliteMissingActiveMs >= SATELLITE_DATA_TIMEOUT_MS) {
+    } else if (hadSatelliteData && ggaSatsUpdated && ggaSatsValid && ggaSats == 0) {
+        // This is an explicit, NEW TinyGPS++ GGA report saying that no
+        // satellites are currently used. Only fresh zero reports are allowed
+        // to advance the timeout.
+        if (satelliteMissingSinceMs == 0) {
+            satelliteMissingSinceMs = satelliteNowMs;
+            LOG_DEBUG_GPS("Fresh TinyGPS++ zero-satellite report; starting No Sats timeout");
+        } else if ((uint32_t)(satelliteNowMs - satelliteMissingSinceMs) >= SATELLITE_DATA_TIMEOUT_MS) {
             if (p.sats_in_view != 0) {
                 p.sats_in_view = 0;
                 shouldPublish = true;
-                LOG_DEBUG_GPS("Satellite status timed out from TinyGPS++: No Sats");
+                LOG_DEBUG_GPS("Satellite status confirmed by fresh TinyGPS++ data: No Sats");
             }
-            // Wait for a new positive TinyGPS++ count before arming another timeout.
-            hadSatelliteData = false;
-            satelliteMissingActiveMs = 0;
         }
     }
 
