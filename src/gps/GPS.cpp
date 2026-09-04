@@ -1582,11 +1582,9 @@ int32_t GPS::runOnce()
         // Hold has expired , Search time has expired, we got a time only, or we never needed to hold.
         bool holdExpired = holdJustExpired(fixHoldEnds);
         if (shouldPublish || tooLong || holdExpired) {
-            // At the end of every scheduled GPS update window, also publish
-            // the current satellite status when TinyGPS++ has previously
-            // supplied a positive count. This keeps GPSStatus/Base UI in sync
-            // even if there is no new position fix in this particular window.
-            if ((gotTime && hasValidLocation) || p.sats_in_view > 0) {
+            // Satellite changes set shouldPublish directly in lookForLocation().
+            // Do not repeatedly republish an old positive satellite count here.
+            if (gotTime && hasValidLocation) {
                 shouldPublish = true;
             }
             if (shouldPublish) {
@@ -2148,38 +2146,31 @@ bool GPS::lookForLocation()
     }
 
     // Satellite status comes only from TinyGPS++.
-    //
-    // A short parser/update gap must not immediately turn the UI into
-    // "No Sats".  While GPS is actively being sampled, TinyGPS++ gets a
-    // grace period to deliver another positive satellite count.
-    //
-    // If no positive satellite data arrives for SATELLITE_DATA_TIMEOUT_MS
-    // during a continuous active sampling period, publish 0 ("No Sats").
-    //
-    // A long gap between calls means the receiver was not continuously
-    // being sampled (for example because of the configured GPS interval).
-    // In that case start a fresh grace period instead of treating the sleep
-    // time as missing TinyGPS++ data.
+    // Short GSV/GGA gaps must not immediately turn the UI into "No Sats".
+    // Count only time while GPS is actively being sampled. Long gaps between
+    // calls (GPS sleep / scheduler interval) are deliberately not counted as
+    // missing satellite data.
     constexpr uint32_t SATELLITE_DATA_TIMEOUT_MS = 15000;
-    constexpr uint32_t SATELLITE_POLL_GAP_RESET_MS = 2000;
+    constexpr uint32_t SATELLITE_ACTIVE_POLL_MAX_GAP_MS = 2000;
 
     static uint32_t lastSatellitePollMs = 0;
-    static uint32_t satelliteMissingSinceMs = 0;
+    static uint32_t satelliteMissingActiveMs = 0;
     static bool hadSatelliteData = false;
 
     const uint32_t satelliteNowMs = Time::getMillis();
+    uint32_t activePollDeltaMs = 0;
 
-    if (lastSatellitePollMs == 0 ||
-        (uint32_t)(satelliteNowMs - lastSatellitePollMs) > SATELLITE_POLL_GAP_RESET_MS) {
-        // New active sampling window: give TinyGPS++ time to produce fresh
-        // GSV/GGA data before declaring "No Sats".
-        satelliteMissingSinceMs = satelliteNowMs;
+    if (lastSatellitePollMs != 0) {
+        const uint32_t pollDeltaMs = (uint32_t)(satelliteNowMs - lastSatellitePollMs);
+        if (pollDeltaMs <= SATELLITE_ACTIVE_POLL_MAX_GAP_MS) {
+            activePollDeltaMs = pollDeltaMs;
+        }
     }
     lastSatellitePollMs = satelliteNowMs;
 
     if (haveSatelliteCount && reportedSats > 0) {
         hadSatelliteData = true;
-        satelliteMissingSinceMs = 0;
+        satelliteMissingActiveMs = 0;
 
         if (p.sats_in_view != reportedSats) {
             p.sats_in_view = reportedSats;
@@ -2187,17 +2178,23 @@ bool GPS::lookForLocation()
             LOG_DEBUG_GPS("Satellite status updated from TinyGPS++: view=%u", p.sats_in_view);
         }
     } else if (hadSatelliteData) {
-        // TinyGPS++ currently has no positive satellite data.
-        // Do not clear the display on a short GSV/GGA transition.
-        if (satelliteMissingSinceMs == 0)
-            satelliteMissingSinceMs = satelliteNowMs;
+        // TinyGPS++ currently has no positive satellite data. Accumulate only
+        // active polling time; GPS sleep does not advance this timeout.
+        if (satelliteMissingActiveMs < SATELLITE_DATA_TIMEOUT_MS) {
+            satelliteMissingActiveMs += activePollDeltaMs;
+            if (satelliteMissingActiveMs > SATELLITE_DATA_TIMEOUT_MS)
+                satelliteMissingActiveMs = SATELLITE_DATA_TIMEOUT_MS;
+        }
 
-        if ((uint32_t)(satelliteNowMs - satelliteMissingSinceMs) >= SATELLITE_DATA_TIMEOUT_MS) {
+        if (satelliteMissingActiveMs >= SATELLITE_DATA_TIMEOUT_MS) {
             if (p.sats_in_view != 0) {
                 p.sats_in_view = 0;
                 shouldPublish = true;
                 LOG_DEBUG_GPS("Satellite status timed out from TinyGPS++: No Sats");
             }
+            // Wait for a new positive TinyGPS++ count before arming another timeout.
+            hadSatelliteData = false;
+            satelliteMissingActiveMs = 0;
         }
     }
 
