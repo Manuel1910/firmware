@@ -103,6 +103,12 @@ bool TinyGPSPlus::encode(char c)
     curSentenceType = GPS_SENTENCE_OTHER;
     currentGSVSystem = TINYGPS_GNSS_UNKNOWN;
     trackedSatellitesIndex = -1;
+    currentGSVTotalMessages = 0;
+    currentGSVMessageNumber = 0;
+    currentGSVTotalSatellites = 0;
+    currentGSVSignalId = 0;
+    for (uint8_t i = 0; i < 4; ++i)
+      currentGSVSentenceSlots[i] = -1;
     currentGSATalkerSystem = TINYGPS_GNSS_UNKNOWN;
     pendingGSASystem = TINYGPS_GNSS_UNKNOWN;
     pendingGSAUsed = 0;
@@ -515,111 +521,166 @@ bool TinyGPSPlus::endOfTermHandler(bool termIsNotEmpty)
   }
 
   // GSV: satellite ID, elevation, azimuth and C/N0.
-  // Keep satellites from different constellations in the same array without
-  // letting the first GSV sentence of the next constellation erase the others.
-  if(curSentenceType == GPS_SENTENCE_GSV) {
-    switch(curTermNumber)
-    {
-      case 2:
-      {
-        // Message number is 1-based. Some receivers may briefly emit 0 while starting.
-        int msgId = atoi(term) - 1;
-        if(msgId < 0 || msgId >= TINYGPS_MAX_SATS / 4) {
-          trackedSatellitesIndex = -1;
+  // NMEA 4.x adds an optional Signal ID after the last satellite block.
+  // For $GNGSV this lets us keep several signal groups in one snapshot
+  // without using a timing heuristic.
+  if (curSentenceType == GPS_SENTENCE_GSV) {
+    if (curTermNumber == 1 && termIsNotEmpty) {
+      currentGSVTotalMessages = (uint8_t)atoi(term);
+    }
+    else if (curTermNumber == 2 && termIsNotEmpty) {
+      currentGSVMessageNumber = (uint8_t)atoi(term);
+
+      // Traditional talker-specific GSV can still be cleared immediately at
+      // message 1. For GN/MIXED we only do that until a Signal ID has been
+      // observed; afterwards cycle boundaries are detected by repeated IDs.
+      if (currentGSVMessageNumber == 1 &&
+          (currentGSVSystem != TINYGPS_GNSS_MIXED || !gsvHasSignalId)) {
+        for (size_t i = 0; i < TINYGPS_MAX_SATS; ++i) {
+          if (trackedSatellites[i].system == currentGSVSystem)
+            memset(&trackedSatellites[i], 0, sizeof(TinyGPSTrackedSattelites));
         }
-        else {
-          // The first GSV sentence of a constellation starts a fresh snapshot
-          // for that constellation only. Other GNSS systems stay intact.
-          if(msgId == 0) {
-            for(size_t i = 0; i < TINYGPS_MAX_SATS; ++i) {
-              if(trackedSatellites[i].system == currentGSVSystem) {
+      }
+
+      trackedSatellitesIndex = -1;
+    }
+    else if (curTermNumber == 3 && termIsNotEmpty) {
+      currentGSVTotalSatellites = (uint8_t)atoi(term);
+    }
+    else {
+      // Determine the position of the optional NMEA 4.x Signal ID.
+      // A full GSV sentence has four satellite blocks (terms 4..19), so the
+      // Signal ID is term 20. On the final sentence fewer than four blocks may
+      // be present, therefore the Signal ID can occur at term 8/12/16 instead.
+      uint8_t satellitesThisSentence = 0;
+      if (currentGSVMessageNumber > 0 && currentGSVTotalMessages > 0) {
+        if (currentGSVMessageNumber < currentGSVTotalMessages) {
+          satellitesThisSentence = 4;
+        } else {
+          int remaining = (int)currentGSVTotalSatellites -
+                          ((int)currentGSVMessageNumber - 1) * 4;
+          if (remaining < 0)
+            remaining = 0;
+          if (remaining > 4)
+            remaining = 4;
+          satellitesThisSentence = (uint8_t)remaining;
+        }
+      }
+
+      const uint8_t signalIdTerm = (uint8_t)(4 + satellitesThisSentence * 4);
+      const bool isSignalIdTerm = satellitesThisSentence > 0 &&
+                                  curTermNumber == signalIdTerm &&
+                                  termIsNotEmpty;
+
+      if (isSignalIdTerm) {
+        currentGSVSignalId = (uint8_t)atoi(term);
+        gsvHasSignalId = true;
+
+        if (currentGSVSystem == TINYGPS_GNSS_MIXED &&
+            currentGSVMessageNumber == 1 &&
+            currentGSVSignalId < 32) {
+          const uint32_t signalBit = (uint32_t)1U << currentGSVSignalId;
+
+          // Seeing the same Signal ID at message 1 again marks the start of a
+          // new complete GNGSV cycle. The current sentence has already been
+          // parsed, so preserve its four slots while clearing the old snapshot.
+          if ((mixedGSVSignalMask & signalBit) != 0) {
+            for (size_t i = 0; i < TINYGPS_MAX_SATS; ++i) {
+              if (trackedSatellites[i].system != TINYGPS_GNSS_MIXED)
+                continue;
+
+              bool belongsToCurrentSentence = false;
+              for (uint8_t s = 0; s < 4; ++s) {
+                if (currentGSVSentenceSlots[s] == (int8_t)i) {
+                  belongsToCurrentSentence = true;
+                  break;
+                }
+              }
+
+              if (!belongsToCurrentSentence)
                 memset(&trackedSatellites[i], 0, sizeof(TinyGPSTrackedSattelites));
+            }
+            mixedGSVSignalMask = 0;
+          }
+
+          mixedGSVSignalMask |= signalBit;
+        }
+      }
+      else {
+        switch (curTermNumber) {
+          // Satellite ID / PRN / SVID
+          case 4:
+          case 8:
+          case 12:
+          case 16:
+          {
+            trackedSatellitesIndex = -1;
+
+            if (termIsNotEmpty) {
+              const uint16_t prn = (uint16_t)atoi(term);
+              int freeSlot = -1;
+
+              for (size_t i = 0; i < TINYGPS_MAX_SATS; ++i) {
+                if (trackedSatellites[i].prn == prn &&
+                    trackedSatellites[i].system == currentGSVSystem) {
+                  trackedSatellitesIndex = (int8_t)i;
+                  break;
+                }
+
+                if (freeSlot < 0 && trackedSatellites[i].prn == 0)
+                  freeSlot = (int)i;
+              }
+
+              if (trackedSatellitesIndex < 0 && freeSlot >= 0)
+                trackedSatellitesIndex = (int8_t)freeSlot;
+
+              if (trackedSatellitesIndex >= 0) {
+                TinyGPSTrackedSattelites &sat = trackedSatellites[trackedSatellitesIndex];
+                sat.system = currentGSVSystem;
+                sat.prn = prn;
+                sat.elevation = 0;
+                sat.azimuth = 0;
+                sat.strength = 0;
+                sat.tracked = false;
+
+                const uint8_t block = (uint8_t)((curTermNumber - 4) / 4);
+                if (block < 4)
+                  currentGSVSentenceSlots[block] = trackedSatellitesIndex;
               }
             }
+            break;
           }
-          trackedSatellitesIndex = -1;
-        }
-        break;
-      }
 
-      // Satellite ID / PRN / SVID
-      case 4:
-      case 8:
-      case 12:
-      case 16:
-      {
-        trackedSatellitesIndex = -1;
+          // Elevation, degrees above horizon
+          case 5:
+          case 9:
+          case 13:
+          case 17:
+            if (trackedSatellitesIndex >= 0 && termIsNotEmpty)
+              trackedSatellites[trackedSatellitesIndex].elevation = (uint8_t)atoi(term);
+            break;
 
-        if(termIsNotEmpty) {
-          const uint16_t prn = (uint16_t)atoi(term);
-          int freeSlot = -1;
+          // Azimuth, degrees from true north
+          case 6:
+          case 10:
+          case 14:
+          case 18:
+            if (trackedSatellitesIndex >= 0 && termIsNotEmpty)
+              trackedSatellites[trackedSatellitesIndex].azimuth = (uint16_t)atoi(term);
+            break;
 
-          // Reuse an existing entry for this constellation/SVID if present.
-          // Otherwise remember the first empty slot.
-          for(size_t i = 0; i < TINYGPS_MAX_SATS; ++i) {
-            if(trackedSatellites[i].prn == prn &&
-               trackedSatellites[i].system == currentGSVSystem) {
-              trackedSatellitesIndex = (int8_t)i;
-              break;
+          // C/N0 / SNR, dB-Hz
+          case 7:
+          case 11:
+          case 15:
+          case 19:
+            if (trackedSatellitesIndex >= 0) {
+              trackedSatellites[trackedSatellitesIndex].tracked = termIsNotEmpty;
+              if (termIsNotEmpty)
+                trackedSatellites[trackedSatellitesIndex].strength = (uint8_t)atoi(term);
             }
-
-            if(freeSlot < 0 && trackedSatellites[i].prn == 0)
-              freeSlot = (int)i;
-          }
-
-          if(trackedSatellitesIndex < 0 && freeSlot >= 0)
-            trackedSatellitesIndex = (int8_t)freeSlot;
-
-          if(trackedSatellitesIndex >= 0) {
-            TinyGPSTrackedSattelites &sat = trackedSatellites[trackedSatellitesIndex];
-            sat.system = currentGSVSystem;
-            sat.prn = prn;
-
-            // Clear fields belonging to this satellite block before they are
-            // filled by terms 5/6/7 (or 9/10/11, etc.).
-            sat.elevation = 0;
-            sat.azimuth = 0;
-            sat.strength = 0;
-            sat.tracked = false;
-          }
+            break;
         }
-        break;
-      }
-
-      // Elevation, degrees above horizon
-      case 5:
-      case 9:
-      case 13:
-      case 17:
-      {
-        if(trackedSatellitesIndex >= 0 && termIsNotEmpty)
-          trackedSatellites[trackedSatellitesIndex].elevation = (uint8_t)atoi(term);
-        break;
-      }
-
-      // Azimuth, degrees from true north
-      case 6:
-      case 10:
-      case 14:
-      case 18:
-      {
-        if(trackedSatellitesIndex >= 0 && termIsNotEmpty)
-          trackedSatellites[trackedSatellitesIndex].azimuth = (uint16_t)atoi(term);
-        break;
-      }
-
-      // C/N0 / SNR, dB-Hz
-      case 7:
-      case 11:
-      case 15:
-      case 19:
-      {
-        if(trackedSatellitesIndex >= 0) {
-          trackedSatellites[trackedSatellitesIndex].tracked = termIsNotEmpty;
-          if(termIsNotEmpty)
-            trackedSatellites[trackedSatellitesIndex].strength = (uint8_t)atoi(term);
-        }
-        break;
       }
     }
   }

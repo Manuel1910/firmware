@@ -478,6 +478,16 @@ class TinyGPSPlus
     int8_t trackedSatellitesIndex = -1; // current GSV satellite slot, -1 means invalid
     uint8_t currentGSVSystem = TINYGPS_GNSS_UNKNOWN;
 
+    // GSV/NMEA 4.x state. The optional signal ID is used to keep multiple
+    // $GNGSV signal groups from erasing each other.
+    uint8_t currentGSVTotalMessages = 0;
+    uint8_t currentGSVMessageNumber = 0;
+    uint8_t currentGSVTotalSatellites = 0;
+    uint8_t currentGSVSignalId = 0;
+    int8_t currentGSVSentenceSlots[4] = {-1, -1, -1, -1};
+    uint32_t mixedGSVSignalMask = 0;
+    bool gsvHasSignalId = false;
+
     // GSA values are staged until checksum validation.
     uint8_t currentGSATalkerSystem = TINYGPS_GNSS_UNKNOWN;
     uint8_t pendingGSASystem = TINYGPS_GNSS_UNKNOWN;
