@@ -77,7 +77,7 @@ void drawFrame(OLEDDisplay *display, OLEDDisplayUiState *, int16_t x, int16_t y)
 
     char top[42];
     snprintf(top, sizeof(top), "Used:%u Trk:%u View:%u", (unsigned)used, (unsigned)tracked, (unsigned)view);
-    display->drawString(x + 2, y + 13, top);
+    display->drawString(x + 2, y + 14, top);
 
     char systems[46];
     snprintf(systems, sizeof(systems), "GPS:%u GLO:%u BDS:%u",
@@ -87,14 +87,14 @@ void drawFrame(OLEDDisplay *display, OLEDDisplayUiState *, int16_t x, int16_t y)
                              : gps->getSatellitesUsedBySystemSnapshot(TINYGPS_GNSS_GLONASS)),
              (unsigned)(live ? gps->getSatellitesUsedBySystem(TINYGPS_GNSS_BEIDOU)
                              : gps->getSatellitesUsedBySystemSnapshot(TINYGPS_GNSS_BEIDOU)));
-    display->drawString(x + 2, y + 26, systems);
+    display->drawString(x + 2, y + 27, systems);
 
     char dop[48];
     snprintf(dop, sizeof(dop), "Fix:%u P:%u H:%u V:%u", (unsigned)fix, (unsigned)pdop, (unsigned)hdop, (unsigned)vdop);
-    display->drawString(x + 2, y + 40, dop);
+    display->drawString(x + 2, y + 41, dop);
 
-    display->drawHorizontalLine(x + 2, y + 54, w - 4);
-    display->drawString(x + 2, y + 56, live ? "SYS ID EL  AZ  SNR" : "LAST SYS ID EL AZ SNR");
+    display->drawHorizontalLine(x + 2, y + 57, w - 4);
+    display->drawString(x + 2, y + 57, live ? "SYS ID EL  AZ  SNR" : "LAST SYS ID EL AZ SNR");
 
     const auto *sats = gps->getTrackedSatellites();
     const size_t cap = gps->getTrackedSatelliteCapacity();
@@ -117,7 +117,7 @@ void drawFrame(OLEDDisplay *display, OLEDDisplayUiState *, int16_t x, int16_t y)
         return a->prn < b->prn;
     });
 
-    int16_t yy = y + 70;
+    int16_t yy = y + 72;
     const int16_t bottom = y + h - 4;
 
     if (count == 0) {
