@@ -2098,6 +2098,79 @@ int Screen::handleStatusUpdate(const meshtastic::Status *arg)
         }
         break;
     }
+    case STATUS_TYPE_GPS: {
+#if !MESHTASTIC_EXCLUDE_GPS
+        // GPSStatus changes were observed but previously ignored here. On
+        // E-Ink that can leave the physical panel showing an old satellite
+        // number even though GPSStatus has already changed. Track only the
+        // display-relevant GPS fields so ordinary position updates do not
+        // force unnecessary E-Ink refreshes.
+        static bool gpsDisplayStateInitialized = false;
+        static uint32_t lastGpsDisplaySats = 0;
+        static bool lastGpsDisplayLock = false;
+        static bool lastGpsDisplayConnected = false;
+        static bool lastGpsDisplayHasTime = false;
+        static bool lastGpsDisplaySearching = false;
+        static bool lastGpsDisplaySleeping = false;
+        static bool lastGpsDisplayFreshSats = false;
+
+        if (!gpsStatus)
+            break;
+
+        const uint32_t currentSats = gpsStatus->getNumSatellites();
+        const bool currentLock = gpsStatus->getHasLock();
+        const bool currentConnected = gpsStatus->getIsConnected();
+        const bool currentHasTime = gpsStatus->getHasTime();
+        const bool currentSearching = gpsStatus->getIsSearching();
+        const bool currentSleeping = gpsStatus->getIsSleeping();
+        const bool currentFreshSats = gpsStatus->getHasFreshSatelliteData();
+
+        if (!gpsDisplayStateInitialized) {
+            lastGpsDisplaySats = currentSats;
+            lastGpsDisplayLock = currentLock;
+            lastGpsDisplayConnected = currentConnected;
+            lastGpsDisplayHasTime = currentHasTime;
+            lastGpsDisplaySearching = currentSearching;
+            lastGpsDisplaySleeping = currentSleeping;
+            lastGpsDisplayFreshSats = currentFreshSats;
+            gpsDisplayStateInitialized = true;
+            if (showingNormalScreen && screenOn)
+                forceDisplay(true);
+            break;
+        }
+
+        const bool countChanged = currentSats != lastGpsDisplaySats;
+        const bool availabilityChanged = (currentSats == 0) != (lastGpsDisplaySats == 0);
+        const bool lockChanged = currentLock != lastGpsDisplayLock;
+        const bool connectionChanged = currentConnected != lastGpsDisplayConnected;
+        const bool hasTimeChanged = currentHasTime != lastGpsDisplayHasTime;
+        const bool searchingChanged = currentSearching != lastGpsDisplaySearching;
+        const bool sleepingChanged = currentSleeping != lastGpsDisplaySleeping;
+        const bool freshSatsChanged = currentFreshSats != lastGpsDisplayFreshSats;
+
+        lastGpsDisplaySats = currentSats;
+        lastGpsDisplayLock = currentLock;
+        lastGpsDisplayConnected = currentConnected;
+        lastGpsDisplayHasTime = currentHasTime;
+        lastGpsDisplaySearching = currentSearching;
+        lastGpsDisplaySleeping = currentSleeping;
+        lastGpsDisplayFreshSats = currentFreshSats;
+
+        if (showingNormalScreen && screenOn) {
+            if (availabilityChanged || lockChanged || connectionChanged || hasTimeChanged || searchingChanged ||
+                sleepingChanged || freshSatsChanged) {
+                // Important semantic transitions (especially >0 -> 0 sats)
+                // must reach a physical E-Ink panel immediately.
+                forceDisplay(true);
+            } else if (countChanged) {
+                // A normal nonzero count change only schedules a prompt redraw;
+                // do not force a hardware refresh for every GPS position update.
+                setFastFramerate();
+            }
+        }
+#endif
+        break;
+    }
     }
 
     return 0;

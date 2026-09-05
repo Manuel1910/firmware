@@ -45,7 +45,8 @@ TinyGPSPlus::TinyGPSPlus()
 {
     term[0] = '\0';
     memset(trackedSatellites, 0, sizeof(trackedSatellites));
-    memset(gsaInfo, 0, sizeof(gsaInfo));
+    for (auto &info : gsaInfo)
+        info = TinyGPSGSAInfo{};
 }
 
 //
@@ -84,6 +85,15 @@ bool TinyGPSPlus::encode(char c)
     } break;
 
     case '$': // sentence begin
+        // If a GSV sentence was truncated before a checksum term, its term-by-term
+        // mutations must not leak into the public satellite snapshot.
+        if (curSentenceType == GPS_SENTENCE_GSV && gsvRollbackValid) {
+            memcpy(trackedSatellites, gsvRollbackSatellites, sizeof(trackedSatellites));
+            mixedGSVSignalMask = gsvRollbackMixedSignalMask;
+            gsvHasSignalId = gsvRollbackHasSignalId;
+            gsvRollbackValid = false;
+        }
+
         sentenceTime = millis();
         curTermNumber = curTermOffset = 0;
         parity = 0;
@@ -111,6 +121,8 @@ bool TinyGPSPlus::encode(char c)
         pendingZDAZoneHours = 0;
         pendingZDAZoneMinutes = 0;
         pendingAntennaStatus = TINYGPS_ANT_UNKNOWN;
+        pendingFixQ = 0;
+        gsvRollbackValid = false;
         flags &= (~FLAG_IS_CHECKSUM_TERM);
         setSentenceHasFix(false);
         return false;
@@ -248,6 +260,10 @@ bool TinyGPSPlus::endOfTermHandler(bool termIsNotEmpty)
                 }
                 break;
             case GPS_SENTENCE_GGA:
+                // GGA fix quality is committed only after checksum validation. This
+                // prevents a corrupted GGA sentence from changing GPS::hasLock().
+                fixQ = pendingFixQ;
+                lastGGAUpdate = sentenceTime;
                 if (time.isNotEmpty())
                     time.commit(sentenceTime);
                 if (sentenceHasFix()) {
@@ -265,15 +281,17 @@ bool TinyGPSPlus::endOfTermHandler(bool termIsNotEmpty)
                 break;
 
             case GPS_SENTENCE_GSV:
-                // The GSV fields are filled while parsing, but mark them fresh only
-                // after this sentence has passed its checksum.
+                // The GSV fields are filled while parsing, but they become public
+                // "fresh" data only after this sentence has passed its checksum.
                 lastGSVUpdate = sentenceTime;
                 for (uint8_t slot = 0; slot < 4; ++slot) {
                     const int8_t index = currentGSVSentenceSlots[slot];
                     if (index >= 0)
                         trackedSatellites[index].lastUpdate = sentenceTime;
                 }
+                gsvRollbackValid = false;
                 break;
+
             case GPS_SENTENCE_GSA: {
                 uint8_t system = pendingGSASystem;
                 if (system == TINYGPS_GNSS_UNKNOWN)
@@ -339,6 +357,13 @@ bool TinyGPSPlus::endOfTermHandler(bool termIsNotEmpty)
                 // Bad checksum in GPRMC sentence, reset optional variables
                 //   to prevent meshtastic-device issue #863
                 course.newval = speed.newval = 0;
+            } else if (curSentenceType == GPS_SENTENCE_GSV && gsvRollbackValid) {
+                // GSV mutates its snapshot as terms arrive. Restore the complete
+                // previous checksum-valid state if this sentence is corrupt.
+                memcpy(trackedSatellites, gsvRollbackSatellites, sizeof(trackedSatellites));
+                mixedGSVSignalMask = gsvRollbackMixedSignalMask;
+                gsvHasSignalId = gsvRollbackHasSignalId;
+                gsvRollbackValid = false;
             }
             ++failedChecksumCount;
         }
@@ -377,6 +402,13 @@ bool TinyGPSPlus::endOfTermHandler(bool termIsNotEmpty)
                 currentGSATalkerSystem = TINYGPS_GNSS_UNKNOWN;
         } else if (strlen(term) == 5 && !strncmp(term + 2, "GSV", 3)) {
             curSentenceType = GPS_SENTENCE_GSV;
+
+            // GSV changes trackedSatellites while parsing. Snapshot it before any
+            // GSV terms are applied so a later checksum failure is fully reversible.
+            memcpy(gsvRollbackSatellites, trackedSatellites, sizeof(trackedSatellites));
+            gsvRollbackMixedSignalMask = mixedGSVSignalMask;
+            gsvRollbackHasSignalId = gsvHasSignalId;
+            gsvRollbackValid = true;
 
             if (!strncmp(term, "GP", 2))
                 currentGSVSystem = TINYGPS_GNSS_GPS;
@@ -717,8 +749,8 @@ bool TinyGPSPlus::endOfTermHandler(bool termIsNotEmpty)
             date.setDate(term);
             break;
         case COMBINE(GPS_SENTENCE_GGA, 6): // Fix data (GPGGA)
-            setSentenceHasFix(term[0] > '0');
-            fixQ = term[0] - '0';
+            pendingFixQ = (termIsNotEmpty && term[0] >= '0' && term[0] <= '9') ? (uint8_t)(term[0] - '0') : 0;
+            setSentenceHasFix(pendingFixQ > 0);
             break;
         case COMBINE(GPS_SENTENCE_GGA, 7): // Satellites used (GPGGA)
             satellites.setNotEmpty(termIsNotEmpty);
