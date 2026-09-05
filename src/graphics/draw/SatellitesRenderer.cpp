@@ -87,11 +87,11 @@ void drawFrame(OLEDDisplay *display, OLEDDisplayUiState *, int16_t x, int16_t y)
                              : gps->getSatellitesUsedBySystemSnapshot(TINYGPS_GNSS_GLONASS)),
              (unsigned)(live ? gps->getSatellitesUsedBySystem(TINYGPS_GNSS_BEIDOU)
                              : gps->getSatellitesUsedBySystemSnapshot(TINYGPS_GNSS_BEIDOU)));
-    display->drawString(x + 2, y + 25, systems);
+    display->drawString(x + 2, y + 26, systems);
 
     char dop[48];
     snprintf(dop, sizeof(dop), "Fix:%u P:%u H:%u V:%u", (unsigned)fix, (unsigned)pdop, (unsigned)hdop, (unsigned)vdop);
-    display->drawString(x + 2, y + 37, dop);
+    display->drawString(x + 2, y + 40, dop);
 
     display->drawHorizontalLine(x + 2, y + 54, w - 4);
     display->drawString(x + 2, y + 56, live ? "SYS ID EL  AZ  SNR" : "LAST SYS ID EL AZ SNR");
@@ -117,7 +117,7 @@ void drawFrame(OLEDDisplay *display, OLEDDisplayUiState *, int16_t x, int16_t y)
         return a->prn < b->prn;
     });
 
-    int16_t yy = y + 69;
+    int16_t yy = y + 70;
     const int16_t bottom = y + h - 4;
 
     if (count == 0) {
@@ -141,7 +141,7 @@ void drawFrame(OLEDDisplay *display, OLEDDisplayUiState *, int16_t x, int16_t y)
                      (unsigned)list[i]->elevation, (unsigned)list[i]->azimuth);
 
         display->drawString(x + 2, yy, row);
-        yy += 12;
+        yy += 13;
     }
 }
 } // namespace graphics::SatellitesRenderer
