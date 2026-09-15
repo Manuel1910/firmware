@@ -324,7 +324,11 @@ bool TinyGPSPlus::endOfTermHandler(bool termIsNotEmpty)
         if (system == TINYGPS_GNSS_UNKNOWN)
           system = currentGSATalkerSystem;
 
+<<<<<<< HEAD
         if (system >= TINYGPS_GNSS_GPS && system <= TINYGPS_GNSS_MIXED) {
+=======
+        if (system >= TINYGPS_GNSS_GPS && system <= TINYGPS_GNSS_QZSS) {
+>>>>>>> 10915fec4 (t-echo / t-echo-plus-NMEA4)
           gsaInfo[system].system = system;
           gsaInfo[system].satellitesUsed = pendingGSAUsed;
           memcpy(gsaInfo[system].satelliteIds, pendingGSAIds, sizeof(pendingGSAIds));

@@ -490,7 +490,11 @@ bool ICM20948Singleton::init(ScanI2C::FoundDevice device)
 #ifdef ICM_20948_DMP_IS_ENABLED
 
 // Stub
+<<<<<<< HEAD
 bool ICM20948Singleton::initDMP()
+=======
+bool ICM20948Sensor::initDMP()
+>>>>>>> 10915fec4 (t-echo / t-echo-plus-NMEA4)
 {
     return false;
 }
