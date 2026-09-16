@@ -401,12 +401,10 @@ class TinyGPSPlus
 
     uint16_t gsaSatellitesUsedTotalSnapshot() const
     {
-        if (gsaInfo[TINYGPS_GNSS_MIXED].valid)
-            return gsaInfo[TINYGPS_GNSS_MIXED].satellitesUsed;
-
         uint16_t total = 0;
-        for (uint8_t sys = TINYGPS_GNSS_GPS; sys <= TINYGPS_GNSS_QZSS; ++sys)
-            if (gsaInfo[sys].valid)
+        const bool hasMixed = gsaInfo[TINYGPS_GNSS_MIXED].valid;
+        for (uint8_t sys = TINYGPS_GNSS_GPS; sys <= TINYGPS_GNSS_MIXED; ++sys)
+            if (gsaInfo[sys].valid && (!hasMixed || sys == TINYGPS_GNSS_MIXED))
                 total += gsaInfo[sys].satellitesUsed;
         return total;
     }
@@ -506,12 +504,12 @@ class TinyGPSPlus
 
     uint16_t gsaSatellitesUsedTotal() const
     {
-        if (gsaInfo[TINYGPS_GNSS_MIXED].valid && isFreshAuxTimestamp(gsaInfo[TINYGPS_GNSS_MIXED].lastUpdate))
-            return gsaInfo[TINYGPS_GNSS_MIXED].satellitesUsed;
-
         uint16_t total = 0;
-        for (uint8_t system = TINYGPS_GNSS_GPS; system <= TINYGPS_GNSS_QZSS; ++system)
-            if (gsaInfo[system].valid && isFreshAuxTimestamp(gsaInfo[system].lastUpdate))
+        const bool hasFreshMixed = gsaInfo[TINYGPS_GNSS_MIXED].valid &&
+                                   isFreshAuxTimestamp(gsaInfo[TINYGPS_GNSS_MIXED].lastUpdate);
+        for (uint8_t system = TINYGPS_GNSS_GPS; system <= TINYGPS_GNSS_MIXED; ++system)
+            if (gsaInfo[system].valid && isFreshAuxTimestamp(gsaInfo[system].lastUpdate) &&
+                (!hasFreshMixed || system == TINYGPS_GNSS_MIXED))
                 total += gsaInfo[system].satellitesUsed;
         return total;
     }
