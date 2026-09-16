@@ -219,11 +219,7 @@ struct TinyGPSTime : public TinyGPSDatum<uint32_t> {
   private:
     void commit(uint32_t timestamp);
     void setTime(const char *term);
-<<<<<<< HEAD
     bool isNotNull = false;
-=======
-    bool isNotNull;
->>>>>>> 10915fec4 (t-echo / t-echo-plus-NMEA4)
 };
 
 struct TinyGPSDecimal : public TinyGPSDatum<uint32_t> {
@@ -276,12 +272,12 @@ struct TinyGPSAltitude : public TinyGPSDatum<int32_t> {
 };
 
 struct TinyGPSTrackedSattelites {
-    uint8_t system;    // TinyGPSGnssSystem
-    uint16_t prn;      // Satellite ID / SVID
-    uint8_t elevation; // degrees above horizon: 0..90
-    uint16_t azimuth;  // degrees from true north: 0..359
-    uint8_t strength;  // C/N0 (commonly shown as SNR) in dB-Hz
-    bool tracked;      // true if the GSV SNR/CN0 field is present
+    uint8_t system;      // TinyGPSGnssSystem
+    uint16_t prn;        // Satellite ID / SVID
+    uint8_t elevation;   // degrees above horizon: 0..90
+    uint16_t azimuth;    // degrees from true north: 0..359
+    uint8_t strength;    // C/N0 (commonly shown as SNR) in dB-Hz
+    bool tracked;        // true if the GSV SNR/CN0 field is present
     uint32_t lastUpdate; // millis() of last checksum-valid GSV sentence for this satellite
 };
 
@@ -372,15 +368,9 @@ class TinyGPSPlus
         return sat.prn != 0 && isFreshAuxTimestamp(sat.lastUpdate);
     }
 
-    uint32_t gsvAge() const
-    {
-        return lastGSVUpdate ? (uint32_t)(millis() - lastGSVUpdate) : static_cast<uint32_t>(ULONG_MAX);
-    }
+    uint32_t gsvAge() const { return lastGSVUpdate ? (uint32_t)(millis() - lastGSVUpdate) : static_cast<uint32_t>(ULONG_MAX); }
 
-    uint32_t ggaAge() const
-    {
-        return lastGGAUpdate ? (uint32_t)(millis() - lastGGAUpdate) : static_cast<uint32_t>(ULONG_MAX);
-    }
+    uint32_t ggaAge() const { return lastGGAUpdate ? (uint32_t)(millis() - lastGGAUpdate) : static_cast<uint32_t>(ULONG_MAX); }
 
     // Raw last-valid GSA/GSV snapshot helpers. These deliberately ignore age.
     // They are for UI/diagnostics while the receiver is IDLE/SLEEPING only;
@@ -388,11 +378,7 @@ class TinyGPSPlus
     uint32_t gsaAge() const
     {
         uint32_t best = static_cast<uint32_t>(ULONG_MAX);
-<<<<<<< HEAD
         for (uint8_t sys = TINYGPS_GNSS_GPS; sys <= TINYGPS_GNSS_MIXED; ++sys) {
-=======
-        for (uint8_t sys = TINYGPS_GNSS_GPS; sys <= TINYGPS_GNSS_QZSS; ++sys) {
->>>>>>> 10915fec4 (t-echo / t-echo-plus-NMEA4)
             if (gsaInfo[sys].valid && gsaInfo[sys].lastUpdate != 0) {
                 const uint32_t age = (uint32_t)(millis() - gsaInfo[sys].lastUpdate);
                 if (age < best)
@@ -410,14 +396,9 @@ class TinyGPSPlus
     uint16_t gsaSatellitesUsedTotalSnapshot() const
     {
         uint16_t total = 0;
-<<<<<<< HEAD
         const bool hasMixed = gsaInfo[TINYGPS_GNSS_MIXED].valid;
         for (uint8_t sys = TINYGPS_GNSS_GPS; sys <= TINYGPS_GNSS_MIXED; ++sys)
             if (gsaInfo[sys].valid && (!hasMixed || sys == TINYGPS_GNSS_MIXED))
-=======
-        for (uint8_t sys = TINYGPS_GNSS_GPS; sys <= TINYGPS_GNSS_QZSS; ++sys)
-            if (gsaInfo[sys].valid)
->>>>>>> 10915fec4 (t-echo / t-echo-plus-NMEA4)
                 total += gsaInfo[sys].satellitesUsed;
         return total;
     }
@@ -435,11 +416,7 @@ class TinyGPSPlus
     uint8_t gsaFixTypeSnapshot() const
     {
         uint8_t best = 0;
-<<<<<<< HEAD
         for (uint8_t sys = TINYGPS_GNSS_GPS; sys <= TINYGPS_GNSS_MIXED; ++sys)
-=======
-        for (uint8_t sys = TINYGPS_GNSS_GPS; sys <= TINYGPS_GNSS_QZSS; ++sys)
->>>>>>> 10915fec4 (t-echo / t-echo-plus-NMEA4)
             if (gsaInfo[sys].valid && gsaInfo[sys].fixType > best)
                 best = gsaInfo[sys].fixType;
         return best;
@@ -448,11 +425,7 @@ class TinyGPSPlus
     uint16_t gsaPDOPSnapshot() const
     {
         uint16_t best = 0;
-<<<<<<< HEAD
         for (uint8_t sys = TINYGPS_GNSS_GPS; sys <= TINYGPS_GNSS_MIXED; ++sys) {
-=======
-        for (uint8_t sys = TINYGPS_GNSS_GPS; sys <= TINYGPS_GNSS_QZSS; ++sys) {
->>>>>>> 10915fec4 (t-echo / t-echo-plus-NMEA4)
             const uint16_t value = gsaInfo[sys].valid ? gsaInfo[sys].pdop : 0;
             if (value > 0 && (best == 0 || value < best))
                 best = value;
@@ -463,11 +436,7 @@ class TinyGPSPlus
     uint16_t gsaHDOPSnapshot() const
     {
         uint16_t best = 0;
-<<<<<<< HEAD
         for (uint8_t sys = TINYGPS_GNSS_GPS; sys <= TINYGPS_GNSS_MIXED; ++sys) {
-=======
-        for (uint8_t sys = TINYGPS_GNSS_GPS; sys <= TINYGPS_GNSS_QZSS; ++sys) {
->>>>>>> 10915fec4 (t-echo / t-echo-plus-NMEA4)
             const uint16_t value = gsaInfo[sys].valid ? gsaInfo[sys].hdop : 0;
             if (value > 0 && (best == 0 || value < best))
                 best = value;
@@ -478,11 +447,7 @@ class TinyGPSPlus
     uint16_t gsaVDOPSnapshot() const
     {
         uint16_t best = 0;
-<<<<<<< HEAD
         for (uint8_t sys = TINYGPS_GNSS_GPS; sys <= TINYGPS_GNSS_MIXED; ++sys) {
-=======
-        for (uint8_t sys = TINYGPS_GNSS_GPS; sys <= TINYGPS_GNSS_QZSS; ++sys) {
->>>>>>> 10915fec4 (t-echo / t-echo-plus-NMEA4)
             const uint16_t value = gsaInfo[sys].valid ? gsaInfo[sys].vdop : 0;
             if (value > 0 && (best == 0 || value < best))
                 best = value;
@@ -526,28 +491,18 @@ class TinyGPSPlus
 
     bool gsaSatelliteUsed(uint8_t system, uint16_t prn) const
     {
-<<<<<<< HEAD
-        return system >= TINYGPS_GNSS_GPS && system <= TINYGPS_GNSS_MIXED &&
-=======
-        return system >= TINYGPS_GNSS_GPS && system <= TINYGPS_GNSS_QZSS &&
->>>>>>> 10915fec4 (t-echo / t-echo-plus-NMEA4)
-               gsaInfo[system].valid && isFreshAuxTimestamp(gsaInfo[system].lastUpdate) &&
-               gsaSatelliteUsedSnapshot(system, prn);
+        return system >= TINYGPS_GNSS_GPS && system <= TINYGPS_GNSS_MIXED && gsaInfo[system].valid &&
+               isFreshAuxTimestamp(gsaInfo[system].lastUpdate) && gsaSatelliteUsedSnapshot(system, prn);
     }
 
     uint16_t gsaSatellitesUsedTotal() const
     {
         uint16_t total = 0;
-<<<<<<< HEAD
-        const bool hasFreshMixed = gsaInfo[TINYGPS_GNSS_MIXED].valid &&
-                                   isFreshAuxTimestamp(gsaInfo[TINYGPS_GNSS_MIXED].lastUpdate);
+        const bool hasFreshMixed =
+            gsaInfo[TINYGPS_GNSS_MIXED].valid && isFreshAuxTimestamp(gsaInfo[TINYGPS_GNSS_MIXED].lastUpdate);
         for (uint8_t system = TINYGPS_GNSS_GPS; system <= TINYGPS_GNSS_MIXED; ++system)
             if (gsaInfo[system].valid && isFreshAuxTimestamp(gsaInfo[system].lastUpdate) &&
                 (!hasFreshMixed || system == TINYGPS_GNSS_MIXED))
-=======
-        for (uint8_t system = TINYGPS_GNSS_GPS; system <= TINYGPS_GNSS_QZSS; ++system)
-            if (gsaInfo[system].valid && isFreshAuxTimestamp(gsaInfo[system].lastUpdate))
->>>>>>> 10915fec4 (t-echo / t-echo-plus-NMEA4)
                 total += gsaInfo[system].satellitesUsed;
         return total;
     }
@@ -555,12 +510,7 @@ class TinyGPSPlus
     uint8_t gsaFixType() const
     {
         uint8_t best = 0;
-<<<<<<< HEAD
-        for (uint8_t s = TINYGPS_GNSS_GPS; s <= TINYGPS_GNSS_MIXED; ++s)
-=======
-        for (uint8_t s = TINYGPS_GNSS_GPS; s <= TINYGPS_GNSS_QZSS; ++s)
->>>>>>> 10915fec4 (t-echo / t-echo-plus-NMEA4)
-        {
+        for (uint8_t s = TINYGPS_GNSS_GPS; s <= TINYGPS_GNSS_MIXED; ++s) {
             if (gsaInfo[s].valid && isFreshAuxTimestamp(gsaInfo[s].lastUpdate) && gsaInfo[s].fixType > best)
                 best = gsaInfo[s].fixType;
         }
@@ -570,15 +520,9 @@ class TinyGPSPlus
     uint16_t gsaPDOP() const
     {
         uint16_t best = 0;
-<<<<<<< HEAD
-        for (uint8_t s = TINYGPS_GNSS_GPS; s <= TINYGPS_GNSS_MIXED; ++s)
-=======
-        for (uint8_t s = TINYGPS_GNSS_GPS; s <= TINYGPS_GNSS_QZSS; ++s)
->>>>>>> 10915fec4 (t-echo / t-echo-plus-NMEA4)
-        {
+        for (uint8_t s = TINYGPS_GNSS_GPS; s <= TINYGPS_GNSS_MIXED; ++s) {
             if (gsaInfo[s].valid && isFreshAuxTimestamp(gsaInfo[s].lastUpdate) && gsaInfo[s].pdop > 0 &&
-                (best == 0 || gsaInfo[s].pdop < best))
-            {
+                (best == 0 || gsaInfo[s].pdop < best)) {
                 best = gsaInfo[s].pdop;
             }
         }
@@ -588,15 +532,9 @@ class TinyGPSPlus
     uint16_t gsaHDOP() const
     {
         uint16_t best = 0;
-<<<<<<< HEAD
-        for (uint8_t s = TINYGPS_GNSS_GPS; s <= TINYGPS_GNSS_MIXED; ++s)
-=======
-        for (uint8_t s = TINYGPS_GNSS_GPS; s <= TINYGPS_GNSS_QZSS; ++s)
->>>>>>> 10915fec4 (t-echo / t-echo-plus-NMEA4)
-        {
+        for (uint8_t s = TINYGPS_GNSS_GPS; s <= TINYGPS_GNSS_MIXED; ++s) {
             if (gsaInfo[s].valid && isFreshAuxTimestamp(gsaInfo[s].lastUpdate) && gsaInfo[s].hdop > 0 &&
-                (best == 0 || gsaInfo[s].hdop < best))
-            {
+                (best == 0 || gsaInfo[s].hdop < best)) {
                 best = gsaInfo[s].hdop;
             }
         }
@@ -606,15 +544,9 @@ class TinyGPSPlus
     uint16_t gsaVDOP() const
     {
         uint16_t best = 0;
-<<<<<<< HEAD
-        for (uint8_t s = TINYGPS_GNSS_GPS; s <= TINYGPS_GNSS_MIXED; ++s)
-=======
-        for (uint8_t s = TINYGPS_GNSS_GPS; s <= TINYGPS_GNSS_QZSS; ++s)
->>>>>>> 10915fec4 (t-echo / t-echo-plus-NMEA4)
-        {
+        for (uint8_t s = TINYGPS_GNSS_GPS; s <= TINYGPS_GNSS_MIXED; ++s) {
             if (gsaInfo[s].valid && isFreshAuxTimestamp(gsaInfo[s].lastUpdate) && gsaInfo[s].vdop > 0 &&
-                (best == 0 || gsaInfo[s].vdop < best))
-            {
+                (best == 0 || gsaInfo[s].vdop < best)) {
                 best = gsaInfo[s].vdop;
             }
         }
@@ -677,12 +609,7 @@ class TinyGPSPlus
     // 4 = RTK fixed, 5 = RTK float, etc.
     uint8_t fixQuality() const { return fixQ; }
 
-    enum
-    {
-        FLAG_DEFAULT = 0,
-        FLAG_IS_CHECKSUM_TERM = (1 << 0),
-        FLAG_SENTENCE_HAS_FIX = (1 << 1)
-    };
+    enum { FLAG_DEFAULT = 0, FLAG_IS_CHECKSUM_TERM = (1 << 0), FLAG_SENTENCE_HAS_FIX = (1 << 1) };
 
     void setSentenceHasFix(bool const i_value)
     {

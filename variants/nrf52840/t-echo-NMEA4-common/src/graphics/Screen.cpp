@@ -548,8 +548,7 @@ float Screen::estimatedHeading(double lat, double lon)
                 if (rmcSampleMs != lastRmcSampleMs) {
                     // After a long sleep/outage, adopt the first new course
                     // directly instead of slowly blending from an hours-old heading.
-                    if (filteredRmcHeading < 0.0f || lastRmcSampleMs == 0 ||
-                        (uint32_t)(now - lastRmcSampleMs) > 10000U) {
+                    if (filteredRmcHeading < 0.0f || lastRmcSampleMs == 0 || (uint32_t)(now - lastRmcSampleMs) > 10000U) {
                         filteredRmcHeading = wrapHeading360(rmcCourseDeg);
                     } else {
                         const float delta = wrapDelta180(rmcCourseDeg - filteredRmcHeading);
@@ -2240,8 +2239,8 @@ int Screen::handleStatusUpdate(const meshtastic::Status *arg)
         lastGpsDisplayFreshSats = currentFreshSats;
 
         if (showingNormalScreen && screenOn) {
-            if (availabilityChanged || lockChanged || connectionChanged || hasTimeChanged || searchingChanged || sleepingChanged ||
-                freshSatsChanged) {
+            if (availabilityChanged || lockChanged || connectionChanged || hasTimeChanged || searchingChanged ||
+                sleepingChanged || freshSatsChanged) {
                 // Important semantic transitions (especially >0 -> 0 sats)
                 // must reach a physical E-Ink panel immediately.
                 forceDisplay(true);
