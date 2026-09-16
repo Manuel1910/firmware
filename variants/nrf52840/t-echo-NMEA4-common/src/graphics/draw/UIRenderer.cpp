@@ -1967,7 +1967,7 @@ void UIRenderer::drawCompassAndLocationScreen(OLEDDisplay *display, OLEDDisplayU
         if (config.display.units == meshtastic_Config_DisplayConfig_DisplayUnits_IMPERIAL) {
             snprintf(altitudeLine, sizeof(altitudeLine), "Alt: %.0fft", alt * METERS_TO_FEET);
         } else {
-            snprintf(altitudeLine, sizeof(altitudeLine), "Alt: %.0im", alt);
+            snprintf(altitudeLine, sizeof(altitudeLine), "Alt: %dm", (int)alt);
         }
         display->drawString(x + BASEUI_BODY_LR_MARGIN, textPos[line++] + y, altitudeLine);
     }

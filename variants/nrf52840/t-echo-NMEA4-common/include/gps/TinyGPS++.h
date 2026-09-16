@@ -219,7 +219,7 @@ struct TinyGPSTime : public TinyGPSDatum<uint32_t> {
   private:
     void commit(uint32_t timestamp);
     void setTime(const char *term);
-    bool isNotNull;
+    bool isNotNull = false;
 };
 
 struct TinyGPSDecimal : public TinyGPSDatum<uint32_t> {
