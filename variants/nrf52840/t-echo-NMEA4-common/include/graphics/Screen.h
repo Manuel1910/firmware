@@ -1,5 +1,4 @@
 #pragma once
-#include "NMEA4Config.h"
 
 #include "configuration.h"
 
@@ -730,12 +729,8 @@ class Screen : public concurrency::OSThread
             uint8_t deviceFocused = 255;
             uint8_t system = 255;
             uint8_t gps = 255;
-#if NMEA4_HAS_SATELLITES_PAGE
             uint8_t satellites = 255;
-#endif
-#if NMEA4_HAS_FAVORITES_MAP
             uint8_t favoritesMap = 255;
-#endif
             uint8_t home = 255;
             uint8_t games = 255;
             uint8_t textMessage = 255;

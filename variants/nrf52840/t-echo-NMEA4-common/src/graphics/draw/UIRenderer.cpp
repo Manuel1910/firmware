@@ -530,18 +530,16 @@ void UIRenderer::drawGps(OLEDDisplay *display, int16_t x, int16_t y, const mesht
     } else if (config.position.gps_mode != meshtastic_Config_PositionConfig_GpsMode_ENABLED) {
         snprintf(textString, sizeof(textString), "GPS off");
     } else if (!gps || !gps->getIsConnected()) {
+        // GPSStatus does not expose a sleeping state; disconnected is the
+        // supported indication that no live GPS status is available.
         snprintf(textString, sizeof(textString), "No Lock");
-    } else if (gps->getIsSleeping()) {
-        // Runtime GNSS sleep is intentional energy saving, not lost UART data.
-        snprintf(textString, sizeof(textString), "GPS sleep");
-    } else if (gps->getIsSearching() && !gps->getHasFreshSatelliteData()) {
-        // Receiver has just woken (or NMEA has not resumed yet). Do not show
-        // the previous cycle's satellite count as if it were live.
-        snprintf(textString, sizeof(textString), "GPS search");
-    } else if (gps->getNumSatellites() == 0) {
-        // No position lock and no visible satellites are different states.
-        // Show "No Sats" only when the published satellite count is really 0.
-        snprintf(textString, sizeof(textString), "No Sats");
+    } else if (!gps->getHasLock()) {
+        // GPSStatus has no searching/fresh-data accessor. Use only the
+        // supported lock state and satellite count instead.
+        if (gps->getNumSatellites() == 0)
+            snprintf(textString, sizeof(textString), "No Sats");
+        else
+            snprintf(textString, sizeof(textString), "No Lock");
     } else {
         snprintf(textString, sizeof(textString), "%u sats", gps->getNumSatellites());
     }

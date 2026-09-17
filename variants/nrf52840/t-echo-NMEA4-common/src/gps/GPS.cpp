@@ -1500,16 +1500,7 @@ void GPS::down()
 
 void GPS::notifyStatusObservers()
 {
-    const bool searching = powerState == GPS_ACTIVE;
-    const bool sleeping = powerState == GPS_SOFTSLEEP || powerState == GPS_HARDSLEEP;
-
-    // This flag becomes true only after lookForLocation() sees a checksum-valid
-    // GGA/GSV that belongs to the current ACTIVE acquisition. It therefore
-    // cannot be satisfied by a still-young sentence left over from before sleep.
-    const bool freshSatelliteData = searching && activeCycleFreshSatelliteSeen;
-
-    const meshtastic::GPSStatus status = meshtastic::GPSStatus(hasValidLocation, isConnected(), isPowerSaving(), p, gotTime,
-                                                               searching, sleeping, freshSatelliteData);
+    const meshtastic::GPSStatus status = meshtastic::GPSStatus(hasValidLocation, isConnected(), isPowerSaving(), p, gotTime);
     newStatus.notifyObservers(&status);
 }
 
@@ -2461,25 +2452,9 @@ bool GPS::lookForLocation()
         haveFreshGnssSpeed = true;
     }
 
-    if (haveFreshGnssSpeed) {
-        // Arm the IMU bridge only from a current GNSS speed+course pair.
-        // Course-over-ground is not trustworthy near standstill, so the ICM
-        // is deliberately not allowed to integrate speed below 1.5 km/h.
-        float courseDeg = 0.0f;
-        float courseSpeedKmph = 0.0f;
-        uint32_t courseSampleMs = 0;
-        if (getFreshCourseOverGround(courseDeg, courseSpeedKmph, courseSampleMs) && courseSpeedKmph >= 1.5f) {
-            ICM20948Sensor::setGnssMotionAnchor(freshGnssSpeedKmph, courseDeg);
-        } else {
-            ICM20948Sensor::invalidateGnssMotionAnchor();
-        }
-    } else {
-        float bridgedSpeedKmph = 0.0f;
-        uint32_t bridgeAgeMs = 0;
-        if (ICM20948Sensor::getBridgedSpeedKmph(bridgedSpeedKmph, bridgeAgeMs)) {
-            p.ground_speed = bridgedSpeedKmph;
-        }
-    }
+    // Keep the GNSS value authoritative whenever it is fresh.  Do not call an
+    // optional sensor bridge here: this ICM20948Sensor API does not provide it.
+    (void)haveFreshGnssSpeed;
 #else
     if (reader.speed.isUpdated() && reader.speed.isValid()) {
         p.ground_speed = reader.speed.kmph();
