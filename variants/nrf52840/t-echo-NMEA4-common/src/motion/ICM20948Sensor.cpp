@@ -161,7 +161,7 @@ bool ICM20948Sensor::init()
     ahrsSettings.accelerationRejection = 20.0f;
     ahrsSettings.magneticRejection = 20.0f;
     ahrsSettings.recoveryTriggerPeriod = 100U; // ~5 s at 20 Hz
-    FusionAhrsSetSettings(&nmea4Ahrs, &nmea4AhrsSettings);
+        FusionAhrsSetSettings(&nmea4Ahrs, &ahrsSettings);
 
     FusionBiasInitialise(&nmea4GyroBias);
     FusionBiasSettings biasSettings;
@@ -338,6 +338,8 @@ int32_t ICM20948Sensor::runOnce()
     }
     return MOTION_SENSOR_CHECK_INTERVAL_MS;
 }
+
+void nmea4IcmInvalidateGnssMotionAnchor();
 
 void nmea4IcmSetGnssMotionAnchor(float speedKmph, float courseDeg)
 {
