@@ -1,9 +1,9 @@
 #include "ICM20948Sensor.h"
 
 #if !defined(ARCH_STM32WL) && !MESHTASTIC_EXCLUDE_I2C && __has_include(<ICM_20948.h>)
-#include "concurrency/LockGuard.h"
 #include "detect/ScanI2CTwoWire.h"
 #include "mesh/Throttle.h"
+#include "concurrency/LockGuard.h"
 #include <math.h>
 #if !defined(MESHTASTIC_EXCLUDE_SCREEN)
 
@@ -34,6 +34,14 @@ struct IcmSpeedBridgeState {
 
 concurrency::Lock icmSpeedBridgeLock;
 IcmSpeedBridgeState icmSpeedBridge;
+
+// NMEA4 fusion state is deliberately file-local.  The public
+// ICM20948Sensor class layout stays exactly as declared by the original
+// Meshtastic src/motion/ICM20948Sensor.h.
+FusionAhrs nmea4Ahrs = {};
+FusionBias nmea4GyroBias = {};
+bool nmea4FusionInitialised = false;
+uint32_t nmea4LastFusionUpdateMs = 0;
 
 float wrap360(float value)
 {
@@ -74,7 +82,8 @@ void updateSpeedBridgeFromEarthAcceleration(const FusionVector &earthAcceleratio
 
     // Never integrate the first sample after an anchor/restart, and never
     // integrate while the AHRS is still in its high-gain startup phase.
-    const uint32_t dtMs = (icmSpeedBridge.integrationMs == 0U) ? 0U : (uint32_t)(now - icmSpeedBridge.integrationMs);
+    const uint32_t dtMs =
+        (icmSpeedBridge.integrationMs == 0U) ? 0U : (uint32_t)(now - icmSpeedBridge.integrationMs);
     icmSpeedBridge.integrationMs = now;
     if (!fusionUsable || dtMs == 0U || dtMs > 200U)
         return;
@@ -92,11 +101,13 @@ void updateSpeedBridgeFromEarthAcceleration(const FusionVector &earthAcceleratio
 
     // Mild low-pass before integration; the deadband suppresses residual
     // gravity/tilt noise so it cannot slowly walk the speed estimate.
-    icmSpeedBridge.filteredForwardAccelMps2 = 0.60f * icmSpeedBridge.filteredForwardAccelMps2 + 0.40f * forwardAccelMps2;
+    icmSpeedBridge.filteredForwardAccelMps2 =
+        0.60f * icmSpeedBridge.filteredForwardAccelMps2 + 0.40f * forwardAccelMps2;
     if (fabsf(icmSpeedBridge.filteredForwardAccelMps2) < ICM_SPEED_ACCEL_DEADBAND_MPS2)
         icmSpeedBridge.filteredForwardAccelMps2 = 0.0f;
 
-    float estimate = icmSpeedBridge.estimateKmph + icmSpeedBridge.filteredForwardAccelMps2 * (dtMs * 0.001f) * 3.6f;
+    float estimate =
+        icmSpeedBridge.estimateKmph + icmSpeedBridge.filteredForwardAccelMps2 * (dtMs * 0.001f) * 3.6f;
     if (estimate < 0.0f)
         estimate = 0.0f;
 
@@ -142,7 +153,7 @@ bool ICM20948Sensor::init()
     // 20 Hz 9-DoF fusion. The calibrated magnetic compass remains the
     // absolute reference; gyro supplies the fast relative motion between
     // magnetic corrections.
-    FusionAhrsInitialise(&ahrs);
+    FusionAhrsInitialise(&nmea4Ahrs);
     FusionAhrsSettings ahrsSettings;
     ahrsSettings.convention = FusionConventionNed;
     ahrsSettings.gain = 0.5f;
@@ -150,17 +161,17 @@ bool ICM20948Sensor::init()
     ahrsSettings.accelerationRejection = 20.0f;
     ahrsSettings.magneticRejection = 20.0f;
     ahrsSettings.recoveryTriggerPeriod = 100U; // ~5 s at 20 Hz
-    FusionAhrsSetSettings(&ahrs, &ahrsSettings);
+    FusionAhrsSetSettings(&nmea4Ahrs, &nmea4AhrsSettings);
 
-    FusionBiasInitialise(&gyroBias);
+    FusionBiasInitialise(&nmea4GyroBias);
     FusionBiasSettings biasSettings;
     biasSettings.sampleRate = 1000.0f / MOTION_SENSOR_CHECK_INTERVAL_MS;
     biasSettings.stationaryThreshold = 3.0f;
     biasSettings.stationaryPeriod = 3.0f;
-    FusionBiasSetSettings(&gyroBias, &biasSettings);
+    FusionBiasSetSettings(&nmea4GyroBias, &biasSettings);
 
-    fusionInitialised = false;
-    lastFusionUpdateMs = 0;
+    nmea4FusionInitialised = false;
+    nmea4LastFusionUpdateMs = 0;
     return true;
 }
 
@@ -188,8 +199,8 @@ int32_t ICM20948Sensor::runOnce()
         sensor->sleep(false);
         isAsleep = false;
         // Do not integrate a long sleep gap as if it were one IMU sample.
-        fusionInitialised = false;
-        lastFusionUpdateMs = 0;
+        nmea4FusionInitialised = false;
+        nmea4LastFusionUpdateMs = 0;
     }
 
     bool haveSample = false;
@@ -221,7 +232,7 @@ int32_t ICM20948Sensor::runOnce()
         magZ -= (highestZ + lowestZ) / 2.0f;
 
         FusionVector accel;
-        accel.axis.x = sensor->accX() * 0.001f; // SparkFun API returns milli-g
+        accel.axis.x = sensor->accX() * 0.001f;  // SparkFun API returns milli-g
         accel.axis.y = -sensor->accY() * 0.001f;
         accel.axis.z = -sensor->accZ() * 0.001f;
 
@@ -248,17 +259,17 @@ int32_t ICM20948Sensor::runOnce()
         publishCompassMagSample(mag.axis.x, mag.axis.y, mag.axis.z);
 
         const float magneticHeading = wrap360(FusionCompass(accel, mag, FusionConventionNed));
-        const FusionVector correctedGyro = FusionBiasUpdate(&gyroBias, gyro);
+        const FusionVector correctedGyro = FusionBiasUpdate(&nmea4GyroBias, gyro);
 
-        uint32_t dtMs = lastFusionUpdateMs == 0U ? 0U : (uint32_t)(now - lastFusionUpdateMs);
-        lastFusionUpdateMs = now;
+        uint32_t dtMs = nmea4LastFusionUpdateMs == 0U ? 0U : (uint32_t)(now - nmea4LastFusionUpdateMs);
+        nmea4LastFusionUpdateMs = now;
 
         // A long pause means the IMU was asleep or scheduling was delayed.
         // Restart the attitude state instead of integrating that gap.
-        if (!fusionInitialised || dtMs == 0U || dtMs > 250U) {
-            FusionAhrsRestart(&ahrs);
-            FusionAhrsSetHeading(&ahrs, magneticHeading);
-            fusionInitialised = true;
+        if (!nmea4FusionInitialised || dtMs == 0U || dtMs > 250U) {
+            FusionAhrsRestart(&nmea4Ahrs);
+            FusionAhrsSetHeading(&nmea4Ahrs, magneticHeading);
+            nmea4FusionInitialised = true;
             dtMs = MOTION_SENSOR_CHECK_INTERVAL_MS;
         }
 
@@ -270,16 +281,16 @@ int32_t ICM20948Sensor::runOnce()
 
         // Magnetometer = absolute heading, gyro = fast prediction,
         // accelerometer = roll/pitch/gravity reference.
-        FusionAhrsUpdateExternalHeading(&ahrs, correctedGyro, accel, magneticHeading, dtSeconds);
+        FusionAhrsUpdateExternalHeading(&nmea4Ahrs, correctedGyro, accel, magneticHeading, dtSeconds);
 
-        FusionEuler euler = FusionQuaternionToEuler(FusionAhrsGetQuaternion(&ahrs));
+        FusionEuler euler = FusionQuaternionToEuler(FusionAhrsGetQuaternion(&nmea4Ahrs));
         float fusedHeading = wrap360(euler.angle.yaw);
 
         // Fail safe: the gyro is never allowed to become an independent
         // long-term compass. If fusion ever separates grossly from the proven
         // magnetic reference, snap the yaw reference back to the magnetometer.
         if (fabsf(wrapDelta180(fusedHeading - magneticHeading)) > 90.0f) {
-            FusionAhrsSetHeading(&ahrs, magneticHeading);
+            FusionAhrsSetHeading(&nmea4Ahrs, magneticHeading);
             fusedHeading = magneticHeading;
         }
 
@@ -288,9 +299,9 @@ int32_t ICM20948Sensor::runOnce()
             screen->setHeading(applyCompassOrientation(fusedHeading));
 #endif
 
-        const FusionAhrsFlags flags = FusionAhrsGetFlags(&ahrs);
-        const FusionVector earthAcceleration = FusionAhrsGetEarthAcceleration(&ahrs);
-        updateSpeedBridgeFromEarthAcceleration(earthAcceleration, now, fusionInitialised && !flags.startup);
+        const FusionAhrsFlags flags = FusionAhrsGetFlags(&nmea4Ahrs);
+        const FusionVector earthAcceleration = FusionAhrsGetEarthAcceleration(&nmea4Ahrs);
+        updateSpeedBridgeFromEarthAcceleration(earthAcceleration, now, nmea4FusionInitialised && !flags.startup);
     }
 
 #ifdef ICM_20948_INT_PIN
@@ -328,10 +339,10 @@ int32_t ICM20948Sensor::runOnce()
     return MOTION_SENSOR_CHECK_INTERVAL_MS;
 }
 
-void ICM20948Sensor::setGnssMotionAnchor(float speedKmph, float courseDeg)
+void nmea4IcmSetGnssMotionAnchor(float speedKmph, float courseDeg)
 {
     if (!(speedKmph >= ICM_SPEED_MIN_COURSE_KMPH) || !(courseDeg >= 0.0f && courseDeg < 360.0f)) {
-        invalidateGnssMotionAnchor();
+        nmea4IcmInvalidateGnssMotionAnchor();
         return;
     }
 
@@ -346,7 +357,7 @@ void ICM20948Sensor::setGnssMotionAnchor(float speedKmph, float courseDeg)
     icmSpeedBridge.accelerationMs = 0;
 }
 
-void ICM20948Sensor::invalidateGnssMotionAnchor()
+void nmea4IcmInvalidateGnssMotionAnchor()
 {
     concurrency::LockGuard guard(&icmSpeedBridgeLock);
     icmSpeedBridge.anchorValid = false;
@@ -354,7 +365,7 @@ void ICM20948Sensor::invalidateGnssMotionAnchor()
     icmSpeedBridge.accelerationMs = 0;
 }
 
-bool ICM20948Sensor::getBridgedSpeedKmph(float &speedKmph, uint32_t &anchorAgeMs)
+bool nmea4IcmGetBridgedSpeedKmph(float &speedKmph, uint32_t &anchorAgeMs)
 {
     concurrency::LockGuard guard(&icmSpeedBridgeLock);
 
@@ -368,7 +379,8 @@ bool ICM20948Sensor::getBridgedSpeedKmph(float &speedKmph, uint32_t &anchorAgeMs
         return false;
     }
 
-    if (icmSpeedBridge.accelerationMs == 0U || (uint32_t)(now - icmSpeedBridge.accelerationMs) > ICM_SPEED_ACCEL_MAX_AGE_MS)
+    if (icmSpeedBridge.accelerationMs == 0U ||
+        (uint32_t)(now - icmSpeedBridge.accelerationMs) > ICM_SPEED_ACCEL_MAX_AGE_MS)
         return false;
 
     speedKmph = icmSpeedBridge.estimateKmph;
@@ -486,7 +498,7 @@ bool ICM20948Singleton::init(ScanI2C::FoundDevice device)
 #ifdef ICM_20948_DMP_IS_ENABLED
 
 // Stub
-bool ICM20948Singleton::initDMP()
+bool ICM20948Sensor::initDMP()
 {
     return false;
 }
