@@ -1,5 +1,4 @@
-#include "SatellitesRenderer.h"
-#if defined(T_ECHO_NMEA4_FAMILY) && defined(USE_EINK) && !MESHTASTIC_EXCLUDE_GPS
+#if defined(TTGO_T_ECHO_NMEA4_FAMILY) && defined(USE_EINK) && !MESHTASTIC_EXCLUDE_GPS
 #include "GPS.h"
 #include "graphics/ScreenFonts.h"
 #include <algorithm>
@@ -144,11 +143,12 @@ void drawFrame(OLEDDisplay *display, OLEDDisplayUiState *, int16_t x, int16_t y)
         const bool usedInFix = live ? gps->isSatelliteUsed(*list[i]) : gps->isSatelliteUsedSnapshot(*list[i]);
         const char usedMark = usedInFix ? '*' : ' ';
         if (list[i]->tracked)
-            snprintf(row, sizeof(row), "%c %-3s %3u %2u %3u %3u", usedMark, systemName(list[i]->system), (unsigned)list[i]->prn,
-                     (unsigned)list[i]->elevation, (unsigned)list[i]->azimuth, (unsigned)list[i]->strength);
+            snprintf(row, sizeof(row), "%c %-3s %3u %2u %3u %3u", usedMark, systemName(list[i]->system),
+                     (unsigned)list[i]->prn, (unsigned)list[i]->elevation, (unsigned)list[i]->azimuth,
+                     (unsigned)list[i]->strength);
         else
-            snprintf(row, sizeof(row), "%c %-3s %3u %2u %3u  --", usedMark, systemName(list[i]->system), (unsigned)list[i]->prn,
-                     (unsigned)list[i]->elevation, (unsigned)list[i]->azimuth);
+            snprintf(row, sizeof(row), "%c %-3s %3u %2u %3u  --", usedMark, systemName(list[i]->system),
+                     (unsigned)list[i]->prn, (unsigned)list[i]->elevation, (unsigned)list[i]->azimuth);
 
         display->drawString(x + 2, yy, row);
         yy += 13;

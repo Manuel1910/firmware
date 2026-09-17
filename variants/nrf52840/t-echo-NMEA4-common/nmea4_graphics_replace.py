@@ -1,32 +1,22 @@
 Import("env")
 
-from pathlib import Path
+# Replace ONLY the two existing Meshtastic translation units.
+# Pattern-based matching follows PlatformIO's documented Build Middleware
+# replacement mechanism and avoids adding a second Screen/UI object.
 
-project_dir = Path(env.subst("$PROJECT_DIR")).resolve()
+def replace_screen(env, node):
+    replacement = env.File(
+        "variants/nrf52840/t-echo-NMEA4-common/src/graphics/Screen.cpp"
+    )
+    print("NMEA4: replace src/graphics/Screen.cpp")
+    return replacement
 
-REPLACEMENTS = {
-    "src/graphics/Screen.cpp":
-        "variants/nrf52840/t-echo-NMEA4-common/src/graphics/Screen.cpp",
-    "src/graphics/draw/UIRenderer.cpp":
-        "variants/nrf52840/t-echo-NMEA4-common/src/graphics/draw/UIRenderer.cpp",
-}
+def replace_ui_renderer(env, node):
+    replacement = env.File(
+        "variants/nrf52840/t-echo-NMEA4-common/src/graphics/draw/UIRenderer.cpp"
+    )
+    print("NMEA4: replace src/graphics/draw/UIRenderer.cpp")
+    return replacement
 
-def nmea4_replace_graphics(env, node):
-    try:
-        node_path = Path(node.get_abspath()).resolve()
-        rel = node_path.relative_to(project_dir).as_posix()
-    except Exception:
-        return node
-
-    replacement = REPLACEMENTS.get(rel)
-    if replacement is None:
-        return node
-
-    replacement_path = project_dir / replacement
-    print("NMEA4: replace %s -> %s" % (rel, replacement))
-    return env.File(str(replacement_path))
-
-# PRE middleware is applied when PlatformIO constructs the build object nodes.
-# We deliberately do not add the replacement Screen.cpp/UIRenderer.cpp again
-# through build_src_filter; otherwise both originals and replacements could be built.
-env.AddBuildMiddleware(nmea4_replace_graphics)
+env.AddBuildMiddleware(replace_screen, "src/graphics/Screen.cpp")
+env.AddBuildMiddleware(replace_ui_renderer, "src/graphics/draw/UIRenderer.cpp")

@@ -48,9 +48,6 @@ extern NicheGraphics::BaseUIEInkDisplay *setupNicheGraphicsBaseUI();
 #include "draw/MessageRenderer.h"
 #include "draw/NodeListRenderer.h"
 #include "draw/NotificationRenderer.h"
-#if !MESHTASTIC_EXCLUDE_GPS && __has_include("draw/SatellitesRenderer.h")
-#include "draw/SatellitesRenderer.h"
-#endif
 #include "draw/UIRenderer.h"
 #include "graphics/TFTColorRegions.h"
 #include "modules/CannedMessageModule.h"
@@ -114,17 +111,28 @@ using namespace meshtastic; /** @todo remove */
 namespace graphics
 {
 
+#if defined(TTGO_T_ECHO_NMEA4_FAMILY) && defined(USE_EINK) && !MESHTASTIC_EXCLUDE_GPS
+#define NMEA4_HAS_SATELLITES_PAGE 1
+#else
+#define NMEA4_HAS_SATELLITES_PAGE 0
+#endif
+
+// FavoritesMapRenderer was not part of the isolated source set. Keep it
+// disabled without adding fields to the original Meshtastic Screen class.
+#define NMEA4_HAS_FAVORITES_MAP 0
+
+#if NMEA4_HAS_SATELLITES_PAGE
+namespace SatellitesRenderer
+{
+void drawFrame(OLEDDisplay *display, OLEDDisplayUiState *state, int16_t x, int16_t y);
+}
+#endif
+
 // This means the *visible* area (sh1106 can address 132, but shows 128 for example)
 #define IDLE_FRAMERATE 1 // in fps
 #define COMPASS_ACTIVE_FRAMERATE 20
 
 // DEBUG
-#ifndef NMEA4_HAS_SATELLITES_PAGE
-#define NMEA4_HAS_SATELLITES_PAGE 1
-#endif
-#ifndef NMEA4_HAS_FAVORITES_MAP
-#define NMEA4_HAS_FAVORITES_MAP 0
-#endif
 #define NMEA4_EXTRA_FRAMES (NMEA4_HAS_SATELLITES_PAGE + NMEA4_HAS_FAVORITES_MAP)
 
 #if BASEUI_HAS_GAMES
@@ -550,7 +558,8 @@ float Screen::estimatedHeading(double lat, double lon)
                 if (rmcSampleMs != lastRmcSampleMs) {
                     // After a long sleep/outage, adopt the first new course
                     // directly instead of slowly blending from an hours-old heading.
-                    if (filteredRmcHeading < 0.0f || lastRmcSampleMs == 0 || (uint32_t)(now - lastRmcSampleMs) > 10000U) {
+                    if (filteredRmcHeading < 0.0f || lastRmcSampleMs == 0 ||
+                        (uint32_t)(now - lastRmcSampleMs) > 10000U) {
                         filteredRmcHeading = wrapHeading360(rmcCourseDeg);
                     } else {
                         const float delta = wrapDelta180(rmcCourseDeg - filteredRmcHeading);
@@ -1583,7 +1592,7 @@ void Screen::setFrames(FrameFocus focus)
         PUSH_FRAME_TITLE("GPS");
     }
 
-#if NMEA4_HAS_SATELLITES_PAGE && !MESHTASTIC_EXCLUDE_GPS && __has_include("draw/SatellitesRenderer.h")
+#if NMEA4_HAS_SATELLITES_PAGE
     normalFrames[numframes++] = graphics::SatellitesRenderer::drawFrame;
     indicatorIcons.push_back(icon_compass);
     PUSH_FRAME_TITLE("Satellites");
@@ -1591,7 +1600,6 @@ void Screen::setFrames(FrameFocus focus)
 #endif
 
 #if NMEA4_HAS_FAVORITES_MAP
-    fsi.positions.favoritesMap = numframes;
     normalFrames[numframes++] = graphics::FavoritesMapRenderer::drawFrame;
     indicatorIcons.push_back(icon_distance);
     PUSH_FRAME_TITLE("Favorites Map");
@@ -2192,6 +2200,10 @@ int Screen::handleStatusUpdate(const meshtastic::Status *arg)
         static uint32_t lastGpsDisplaySats = 0;
         static bool lastGpsDisplayLock = false;
         static bool lastGpsDisplayConnected = false;
+        static bool lastGpsDisplayHasTime = false;
+        static bool lastGpsDisplaySearching = false;
+        static bool lastGpsDisplaySleeping = false;
+        static bool lastGpsDisplayFreshSats = false;
 
         if (!gpsStatus)
             break;
@@ -2199,11 +2211,19 @@ int Screen::handleStatusUpdate(const meshtastic::Status *arg)
         const uint32_t currentSats = gpsStatus->getNumSatellites();
         const bool currentLock = gpsStatus->getHasLock();
         const bool currentConnected = gpsStatus->getIsConnected();
+        const bool currentHasTime = gpsStatus->getHasTime();
+        const bool currentSearching = gpsStatus->getIsSearching();
+        const bool currentSleeping = gpsStatus->getIsSleeping();
+        const bool currentFreshSats = gpsStatus->getHasFreshSatelliteData();
 
         if (!gpsDisplayStateInitialized) {
             lastGpsDisplaySats = currentSats;
             lastGpsDisplayLock = currentLock;
             lastGpsDisplayConnected = currentConnected;
+            lastGpsDisplayHasTime = currentHasTime;
+            lastGpsDisplaySearching = currentSearching;
+            lastGpsDisplaySleeping = currentSleeping;
+            lastGpsDisplayFreshSats = currentFreshSats;
             gpsDisplayStateInitialized = true;
             if (showingNormalScreen && screenOn)
                 forceDisplay(true);
@@ -2214,13 +2234,22 @@ int Screen::handleStatusUpdate(const meshtastic::Status *arg)
         const bool availabilityChanged = (currentSats == 0) != (lastGpsDisplaySats == 0);
         const bool lockChanged = currentLock != lastGpsDisplayLock;
         const bool connectionChanged = currentConnected != lastGpsDisplayConnected;
+        const bool hasTimeChanged = currentHasTime != lastGpsDisplayHasTime;
+        const bool searchingChanged = currentSearching != lastGpsDisplaySearching;
+        const bool sleepingChanged = currentSleeping != lastGpsDisplaySleeping;
+        const bool freshSatsChanged = currentFreshSats != lastGpsDisplayFreshSats;
 
         lastGpsDisplaySats = currentSats;
         lastGpsDisplayLock = currentLock;
         lastGpsDisplayConnected = currentConnected;
+        lastGpsDisplayHasTime = currentHasTime;
+        lastGpsDisplaySearching = currentSearching;
+        lastGpsDisplaySleeping = currentSleeping;
+        lastGpsDisplayFreshSats = currentFreshSats;
 
         if (showingNormalScreen && screenOn) {
-            if (availabilityChanged || lockChanged || connectionChanged) {
+            if (availabilityChanged || lockChanged || connectionChanged || hasTimeChanged || searchingChanged || sleepingChanged ||
+                freshSatsChanged) {
                 // Important semantic transitions (especially >0 -> 0 sats)
                 // must reach a physical E-Ink panel immediately.
                 forceDisplay(true);
@@ -2356,21 +2385,6 @@ int Screen::handleInputEvent(const InputEvent *event)
         }
     }
 
-#if NMEA4_HAS_FAVORITES_MAP
-    // Favorites Map: use UP/DOWN for zoom while this frame has focus.
-    if (framesetInfo.positions.favoritesMap != 255 && ui->getUiState()->currentFrame == framesetInfo.positions.favoritesMap) {
-        if (event->inputEvent == INPUT_BROKER_UP) {
-            graphics::FavoritesMapRenderer::zoomIn();
-            setFastFramerate();
-            return 0;
-        }
-        if (event->inputEvent == INPUT_BROKER_DOWN) {
-            graphics::FavoritesMapRenderer::zoomOut();
-            setFastFramerate();
-            return 0;
-        }
-    }
-#endif
 
 #if defined(OLED_COMPACT_UI)
     // UP/DOWN on the compact position screen toggles compass vs coordinates+elevation
