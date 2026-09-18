@@ -193,8 +193,6 @@ template <typename T> bool sawNmeaSentenceAtBaud(T *serialGps, uint32_t timeoutM
 }
 } // namespace
 
-<<<<<<< HEAD
-=======
 static uint16_t gnssQualityLowerIsBetter(uint16_t value, uint16_t best, uint16_t worst)
 {
     if (value <= best)
@@ -380,7 +378,6 @@ void GPS::resetGnssQualityFilter()
     qualityFallbackFix = GnssQualityFixCandidate{};
 }
 
->>>>>>> d96c2ab35217c761c7c1d478e33a6a43da5c37dc
 // For logging
 static const char *getGPSPowerStateString(GPSPowerState state)
 {
@@ -2630,8 +2627,6 @@ bool GPS::lookForLocation()
     }
 #endif
 
-<<<<<<< HEAD
-=======
     // Select between complete real receiver fixes. No coordinate averaging or
     // synthetic position is introduced.
     const uint16_t aggregateQuality = calculateGnssFixQualityScore(fixQual, parsedFixType, p.HDOP, p.PDOP, reader.gsaVDOP());
@@ -2639,7 +2634,6 @@ bool GPS::lookForLocation()
     if (!selectGnssQualityFix(completeCandidate, aggregateQuality, Time::getMillis()))
         return false;
 
->>>>>>> d96c2ab35217c761c7c1d478e33a6a43da5c37dc
     return true;
 }
 
@@ -2700,11 +2694,8 @@ bool GPS::whileActive()
 }
 void GPS::enable()
 {
-<<<<<<< HEAD
-=======
     resetGnssQualityFilter();
 
->>>>>>> d96c2ab35217c761c7c1d478e33a6a43da5c37dc
     // Clear the old scheduling info (reset the lock-time prediction)
     scheduling.reset();
 
@@ -2717,11 +2708,8 @@ void GPS::enable()
 
 int32_t GPS::disable()
 {
-<<<<<<< HEAD
-=======
     resetGnssQualityFilter();
 
->>>>>>> d96c2ab35217c761c7c1d478e33a6a43da5c37dc
     enabled = false;
     setInterval(INT32_MAX);
     setPowerState(GPS_OFF);

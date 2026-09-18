@@ -173,8 +173,6 @@ class GPS : private concurrency::OSThread
     uint16_t getGsaVDOPSnapshot() const { return reader.gsaVDOPSnapshot(); }
     uint32_t getGsvAgeMs() const { return reader.gsvAge(); }
     uint32_t getGsaAgeMs() const { return reader.gsaAge(); }
-<<<<<<< HEAD
-=======
     TinyGPSNmeaMode getNmeaMode() const { return reader.nmeaMode(); }
 
     // Quality of the complete GNSS fix currently selected for Meshtastic.
@@ -186,7 +184,6 @@ class GPS : private concurrency::OSThread
     {
         return qualityCurrentFix.valid ? static_cast<uint8_t>((qualityCurrentFix.score + 5U) / 10U) : 0;
     }
->>>>>>> d96c2ab35217c761c7c1d478e33a6a43da5c37dc
 
     uint16_t getSatellitesUsedBySystem(uint8_t system) const { return reader.gsaSatellitesUsed(system); }
     uint16_t getSatellitesInViewBySystem(uint8_t system) const { return reader.satellitesInView(system); }
@@ -298,8 +295,6 @@ class GPS : private concurrency::OSThread
     int32_t cachedProbeBaud = 0;
     GnssModel_t cachedProbeModel = GNSS_MODEL_UNKNOWN;
 
-<<<<<<< HEAD
-=======
     struct GnssQualityFixCandidate {
         meshtastic_Position position{};
         uint16_t score = 0;    // 0..1000 aggregate quality
@@ -323,7 +318,6 @@ class GPS : private concurrency::OSThread
     GnssQualityFixCandidate qualityCurrentFix;
     GnssQualityFixCandidate qualityFallbackFix;
 
->>>>>>> d96c2ab35217c761c7c1d478e33a6a43da5c37dc
     TinyGPSPlus reader;
     uint8_t fixQual = 0; // fix quality from GPGGA
     uint8_t currentStep = 0;

@@ -78,8 +78,6 @@ enum TinyGPSGnssSystem {
     TINYGPS_GNSS_MIXED
 };
 
-<<<<<<< HEAD
-=======
 // Runtime NMEA protocol-family detection for diagnostics.
 //
 // This is deliberately feature-based rather than a guessed exact revision:
@@ -92,7 +90,6 @@ enum TinyGPSGnssSystem {
 // the UI flap between protocol families.
 enum TinyGPSNmeaMode : uint8_t { TINYGPS_NMEA_UNKNOWN = 0, TINYGPS_NMEA_LEGACY, TINYGPS_NMEA_23_PLUS, TINYGPS_NMEA_4X };
 
->>>>>>> d96c2ab35217c761c7c1d478e33a6a43da5c37dc
 struct TinyGPSGSAInfo {
     uint8_t system = TINYGPS_GNSS_UNKNOWN;
     uint8_t satellitesUsed = 0;
@@ -385,11 +382,8 @@ class TinyGPSPlus
 
     uint32_t gsvAge() const { return lastGSVUpdate ? (uint32_t)(millis() - lastGSVUpdate) : static_cast<uint32_t>(ULONG_MAX); }
 
-<<<<<<< HEAD
-=======
     TinyGPSNmeaMode nmeaMode() const { return detectedNmeaMode; }
 
->>>>>>> d96c2ab35217c761c7c1d478e33a6a43da5c37dc
     uint32_t ggaAge() const { return lastGGAUpdate ? (uint32_t)(millis() - lastGGAUpdate) : static_cast<uint32_t>(ULONG_MAX); }
 
     // Raw last-valid GSA/GSV snapshot helpers. These deliberately ignore age.
@@ -410,9 +404,6 @@ class TinyGPSPlus
 
     uint8_t gsaSatellitesUsedSnapshot(uint8_t system) const
     {
-<<<<<<< HEAD
-        return system < 7 && gsaInfo[system].valid ? gsaInfo[system].satellitesUsed : 0;
-=======
         if (system < TINYGPS_GNSS_GPS || system > TINYGPS_GNSS_MIXED)
             return 0;
 
@@ -446,7 +437,6 @@ class TinyGPSPlus
         }
 
         return gsaInfo[system].valid ? gsaInfo[system].satellitesUsed : 0;
->>>>>>> d96c2ab35217c761c7c1d478e33a6a43da5c37dc
     }
 
     uint16_t gsaSatellitesUsedTotalSnapshot() const
@@ -461,13 +451,6 @@ class TinyGPSPlus
 
     bool gsaSatelliteUsedSnapshot(uint8_t system, uint16_t prn) const
     {
-<<<<<<< HEAD
-        if (system < TINYGPS_GNSS_GPS || system > TINYGPS_GNSS_QZSS || !gsaInfo[system].valid || prn == 0)
-            return false;
-        for (uint8_t i = 0; i < 12; ++i)
-            if (gsaInfo[system].satelliteIds[i] == prn)
-                return true;
-=======
         if (system < TINYGPS_GNSS_GPS || system > TINYGPS_GNSS_QZSS || prn == 0)
             return false;
 
@@ -491,7 +474,6 @@ class TinyGPSPlus
                     return true;
         }
 
->>>>>>> d96c2ab35217c761c7c1d478e33a6a43da5c37dc
         return false;
     }
 
@@ -566,11 +548,6 @@ class TinyGPSPlus
 
     uint8_t gsaSatellitesUsed(uint8_t system) const
     {
-<<<<<<< HEAD
-        return system < 7 && gsaInfo[system].valid && isFreshAuxTimestamp(gsaInfo[system].lastUpdate)
-                   ? gsaInfo[system].satellitesUsed
-                   : 0;
-=======
         if (system < TINYGPS_GNSS_GPS || system > TINYGPS_GNSS_MIXED)
             return 0;
 
@@ -602,15 +579,10 @@ class TinyGPSPlus
         }
 
         return gsaInfo[system].valid && isFreshAuxTimestamp(gsaInfo[system].lastUpdate) ? gsaInfo[system].satellitesUsed : 0;
->>>>>>> d96c2ab35217c761c7c1d478e33a6a43da5c37dc
     }
 
     bool gsaSatelliteUsed(uint8_t system, uint16_t prn) const
     {
-<<<<<<< HEAD
-        return system >= TINYGPS_GNSS_GPS && system <= TINYGPS_GNSS_MIXED && gsaInfo[system].valid &&
-               isFreshAuxTimestamp(gsaInfo[system].lastUpdate) && gsaSatelliteUsedSnapshot(system, prn);
-=======
         if (system < TINYGPS_GNSS_GPS || system > TINYGPS_GNSS_QZSS || prn == 0)
             return false;
 
@@ -631,7 +603,6 @@ class TinyGPSPlus
         }
 
         return false;
->>>>>>> d96c2ab35217c761c7c1d478e33a6a43da5c37dc
     }
 
     uint16_t gsaSatellitesUsedTotal() const
@@ -785,8 +756,6 @@ class TinyGPSPlus
     uint32_t mixedGSVSignalMask = 0;
     bool gsvHasSignalId = false;
 
-<<<<<<< HEAD
-=======
     // Runtime NMEA protocol-family detection.
     //
     // Positive evidence is staged while parsing and committed only after the
@@ -905,7 +874,6 @@ class TinyGPSPlus
         }
     }
 
->>>>>>> d96c2ab35217c761c7c1d478e33a6a43da5c37dc
     // GSV parsing updates the working snapshot term-by-term. Keep a rollback
     // copy so a checksum-failed GSV sentence cannot clear or corrupt the last
     // checksum-valid satellite snapshot.

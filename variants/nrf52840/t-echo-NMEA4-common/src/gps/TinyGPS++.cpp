@@ -105,10 +105,7 @@ bool TinyGPSPlus::encode(char c)
         currentGSVMessageNumber = 0;
         currentGSVTotalSatellites = 0;
         currentGSVSignalId = 0;
-<<<<<<< HEAD
-=======
         currentGSVSentenceHasSignalId = false;
->>>>>>> d96c2ab35217c761c7c1d478e33a6a43da5c37dc
         for (uint8_t i = 0; i < 4; ++i)
             currentGSVSentenceSlots[i] = -1;
         currentGSATalkerSystem = TINYGPS_GNSS_UNKNOWN;
@@ -119,11 +116,6 @@ bool TinyGPSPlus::encode(char c)
         pendingGSAPDOP = 0;
         pendingGSAHDOP = 0;
         pendingGSAVDOP = 0;
-<<<<<<< HEAD
-        pendingGLLStatus = 'V';
-        pendingGLLMode = 'N';
-        pendingVTGMode = 'N';
-=======
         pendingGSAHasSystemId = false;
         pendingRMCModePresent = false;
         pendingGLLStatus = 'V';
@@ -131,7 +123,6 @@ bool TinyGPSPlus::encode(char c)
         pendingGLLModePresent = false;
         pendingVTGMode = 'N';
         pendingVTGModePresent = false;
->>>>>>> d96c2ab35217c761c7c1d478e33a6a43da5c37dc
         pendingZDADay = 0;
         pendingZDAMonth = 0;
         pendingZDAYear = 0;
@@ -275,10 +266,7 @@ bool TinyGPSPlus::endOfTermHandler(bool termIsNotEmpty)
                     if (course.isNotEmpty())
                         course.commit(sentenceTime);
                 }
-<<<<<<< HEAD
-=======
                 commitNmeaModeFromRmc();
->>>>>>> d96c2ab35217c761c7c1d478e33a6a43da5c37dc
                 break;
             case GPS_SENTENCE_GGA:
                 // GGA fix quality is committed only after checksum validation. This
@@ -305,10 +293,7 @@ bool TinyGPSPlus::endOfTermHandler(bool termIsNotEmpty)
                 // The GSV fields are filled while parsing, but they become public
                 // "fresh" data only after this sentence has passed its checksum.
                 lastGSVUpdate = sentenceTime;
-<<<<<<< HEAD
-=======
                 commitNmeaModeFromGsv();
->>>>>>> d96c2ab35217c761c7c1d478e33a6a43da5c37dc
                 for (uint8_t slot = 0; slot < 4; ++slot) {
                     const int8_t index = currentGSVSentenceSlots[slot];
                     if (index >= 0)
@@ -333,11 +318,8 @@ bool TinyGPSPlus::endOfTermHandler(bool termIsNotEmpty)
                     gsaInfo[system].valid = true;
                     gsaInfo[system].lastUpdate = sentenceTime;
                 }
-<<<<<<< HEAD
-=======
                 if (pendingGSAHasSystemId)
                     promoteNmea4Evidence();
->>>>>>> d96c2ab35217c761c7c1d478e33a6a43da5c37dc
                 break;
             }
 
@@ -352,11 +334,8 @@ bool TinyGPSPlus::endOfTermHandler(bool termIsNotEmpty)
                     vtgCourse.commit(sentenceTime);
                     vtgSpeed.commit(sentenceTime);
                 }
-<<<<<<< HEAD
-=======
                 if (pendingVTGModePresent)
                     promoteNmea23Evidence();
->>>>>>> d96c2ab35217c761c7c1d478e33a6a43da5c37dc
                 break;
 
             case GPS_SENTENCE_GLL:
@@ -368,11 +347,8 @@ bool TinyGPSPlus::endOfTermHandler(bool termIsNotEmpty)
                 gllInfo.mode = pendingGLLMode;
                 gllInfo.valid = pendingGLLStatus == 'A';
                 gllInfo.lastUpdate = sentenceTime;
-<<<<<<< HEAD
-=======
                 if (pendingGLLModePresent)
                     promoteNmea23Evidence();
->>>>>>> d96c2ab35217c761c7c1d478e33a6a43da5c37dc
                 break;
 
             case GPS_SENTENCE_ZDA:
@@ -527,10 +503,7 @@ bool TinyGPSPlus::endOfTermHandler(bool termIsNotEmpty)
             pendingGLLStatus = termIsNotEmpty ? term[0] : 'V';
             break;
         case 7:
-<<<<<<< HEAD
-=======
             pendingGLLModePresent = termIsNotEmpty;
->>>>>>> d96c2ab35217c761c7c1d478e33a6a43da5c37dc
             pendingGLLMode = termIsNotEmpty ? term[0] : 'N';
             break;
         }
@@ -598,13 +571,10 @@ bool TinyGPSPlus::endOfTermHandler(bool termIsNotEmpty)
         else if (curTermNumber == 17 && termIsNotEmpty)
             pendingGSAVDOP = (uint16_t)parseDecimal(term);
         else if (curTermNumber == 18 && termIsNotEmpty) {
-<<<<<<< HEAD
-=======
             // A non-empty System ID field itself is NMEA 4.x evidence, even
             // when the numeric ID belongs to a constellation this build does
             // not map explicitly yet.
             pendingGSAHasSystemId = true;
->>>>>>> d96c2ab35217c761c7c1d478e33a6a43da5c37dc
             switch (atoi(term)) {
             case 1:
                 pendingGSASystem = TINYGPS_GNSS_GPS;
@@ -676,10 +646,7 @@ bool TinyGPSPlus::endOfTermHandler(bool termIsNotEmpty)
 
             if (isSignalIdTerm) {
                 currentGSVSignalId = (uint8_t)atoi(term);
-<<<<<<< HEAD
-=======
                 currentGSVSentenceHasSignalId = true;
->>>>>>> d96c2ab35217c761c7c1d478e33a6a43da5c37dc
                 gsvHasSignalId = true;
 
                 if (currentGSVSystem == TINYGPS_GNSS_MIXED && currentGSVMessageNumber == 1 && currentGSVSignalId < 32) {
@@ -807,10 +774,7 @@ bool TinyGPSPlus::endOfTermHandler(bool termIsNotEmpty)
                 vtgSpeed.set(term);
             break;
         case 9:
-<<<<<<< HEAD
-=======
             pendingVTGModePresent = termIsNotEmpty;
->>>>>>> d96c2ab35217c761c7c1d478e33a6a43da5c37dc
             pendingVTGMode = termIsNotEmpty ? term[0] : 'N';
             setSentenceHasFix(pendingVTGMode != 'N');
             break;
@@ -857,12 +821,9 @@ bool TinyGPSPlus::endOfTermHandler(bool termIsNotEmpty)
             date.setNotEmpty(termIsNotEmpty);
             date.setDate(term);
             break;
-<<<<<<< HEAD
-=======
         case COMBINE(GPS_SENTENCE_RMC, 12): // NMEA 2.3+ Mode Indicator
             pendingRMCModePresent = termIsNotEmpty;
             break;
->>>>>>> d96c2ab35217c761c7c1d478e33a6a43da5c37dc
         case COMBINE(GPS_SENTENCE_GGA, 6): // Fix data (GPGGA)
             pendingFixQ = (termIsNotEmpty && term[0] >= '0' && term[0] <= '9') ? (uint8_t)(term[0] - '0') : 0;
             setSentenceHasFix(pendingFixQ > 0);

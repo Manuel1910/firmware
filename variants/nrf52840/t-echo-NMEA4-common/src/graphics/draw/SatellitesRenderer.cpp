@@ -42,7 +42,21 @@ static const char *powerStateName(GPSPowerState state)
     }
 }
 
-<<<<<<< HEAD
+static const char *nmeaModeName(TinyGPSNmeaMode mode)
+{
+    switch (mode) {
+    case TINYGPS_NMEA_4X:
+        return "NMEA 4.x";
+    case TINYGPS_NMEA_23_PLUS:
+        return "NMEA 2.3+";
+    case TINYGPS_NMEA_LEGACY:
+        return "NMEA LEGACY";
+    case TINYGPS_NMEA_UNKNOWN:
+    default:
+        return "NMEA ?";
+    }
+}
+
 void drawFrame(OLEDDisplay *display, OLEDDisplayUiState *, int16_t x, int16_t y)
 =======
 static const char *nmeaModeName(TinyGPSNmeaMode mode)
@@ -89,10 +103,6 @@ void drawSatellitesInfoScreen(OLEDDisplay *display, OLEDDisplayUiState *, int16_
     const uint16_t hdop = live ? gps->getGsaHDOP() : gps->getGsaHDOPSnapshot();
     const uint16_t vdop = live ? gps->getGsaVDOP() : gps->getGsaVDOPSnapshot();
 
-<<<<<<< HEAD
-    char stateLine[28];
-    snprintf(stateLine, sizeof(stateLine), "GNSS %s%s", powerStateName(state), live ? "" : " / LAST");
-=======
     char stateLine[56];
     const char *snapshotMark = live ? "" : " / LAST";
     if (gps->hasSelectedFixQuality()) {
@@ -102,7 +112,6 @@ void drawSatellitesInfoScreen(OLEDDisplay *display, OLEDDisplayUiState *, int16_
         snprintf(stateLine, sizeof(stateLine), "GNSS %s%s / %s / Q--", powerStateName(state), snapshotMark,
                  nmeaModeName(gps->getNmeaMode()));
     }
->>>>>>> d96c2ab35217c761c7c1d478e33a6a43da5c37dc
     display->drawString(x + 2, y + 1, stateLine);
 
     char top[42];
@@ -175,12 +184,11 @@ void drawSatellitesInfoScreen(OLEDDisplay *display, OLEDDisplayUiState *, int16_
         const char usedMark = usedInFix ? '*' : ' ';
         if (list[i]->tracked)
 <<<<<<< HEAD
-            snprintf(row, sizeof(row), "%c %-3s %3u %2u %3u %3u", usedMark, systemName(list[i]->system),
-                     (unsigned)list[i]->prn, (unsigned)list[i]->elevation, (unsigned)list[i]->azimuth,
-                     (unsigned)list[i]->strength);
+            snprintf(row, sizeof(row), "%c %-3s %3u %2u %3u %3u", usedMark, systemName(list[i]->system), (unsigned)list[i]->prn,
+                     (unsigned)list[i]->elevation, (unsigned)list[i]->azimuth, (unsigned)list[i]->strength);
         else
-            snprintf(row, sizeof(row), "%c %-3s %3u %2u %3u  --", usedMark, systemName(list[i]->system),
-                     (unsigned)list[i]->prn, (unsigned)list[i]->elevation, (unsigned)list[i]->azimuth);
+            snprintf(row, sizeof(row), "%c %-3s %3u %2u %3u  --", usedMark, systemName(list[i]->system), (unsigned)list[i]->prn,
+                     (unsigned)list[i]->elevation, (unsigned)list[i]->azimuth);
 =======
             snprintf(row, sizeof(row), "%c %-3s %3u %2u %3u %3u", usedMark, systemName(list[i]->system), (unsigned)list[i]->prn,
                      (unsigned)list[i]->elevation, (unsigned)list[i]->azimuth, (unsigned)list[i]->strength);
