@@ -2201,9 +2201,6 @@ int Screen::handleStatusUpdate(const meshtastic::Status *arg)
         static bool lastGpsDisplayLock = false;
         static bool lastGpsDisplayConnected = false;
         static bool lastGpsDisplayHasTime = false;
-        static bool lastGpsDisplaySearching = false;
-        static bool lastGpsDisplaySleeping = false;
-        static bool lastGpsDisplayFreshSats = false;
 
         if (!gpsStatus)
             break;
@@ -2212,18 +2209,12 @@ int Screen::handleStatusUpdate(const meshtastic::Status *arg)
         const bool currentLock = gpsStatus->getHasLock();
         const bool currentConnected = gpsStatus->getIsConnected();
         const bool currentHasTime = gpsStatus->getHasTime();
-        const bool currentSearching = gpsStatus->getIsSearching();
-        const bool currentSleeping = gpsStatus->getIsSleeping();
-        const bool currentFreshSats = gpsStatus->getHasFreshSatelliteData();
 
         if (!gpsDisplayStateInitialized) {
             lastGpsDisplaySats = currentSats;
             lastGpsDisplayLock = currentLock;
             lastGpsDisplayConnected = currentConnected;
             lastGpsDisplayHasTime = currentHasTime;
-            lastGpsDisplaySearching = currentSearching;
-            lastGpsDisplaySleeping = currentSleeping;
-            lastGpsDisplayFreshSats = currentFreshSats;
             gpsDisplayStateInitialized = true;
             if (showingNormalScreen && screenOn)
                 forceDisplay(true);
@@ -2235,21 +2226,14 @@ int Screen::handleStatusUpdate(const meshtastic::Status *arg)
         const bool lockChanged = currentLock != lastGpsDisplayLock;
         const bool connectionChanged = currentConnected != lastGpsDisplayConnected;
         const bool hasTimeChanged = currentHasTime != lastGpsDisplayHasTime;
-        const bool searchingChanged = currentSearching != lastGpsDisplaySearching;
-        const bool sleepingChanged = currentSleeping != lastGpsDisplaySleeping;
-        const bool freshSatsChanged = currentFreshSats != lastGpsDisplayFreshSats;
 
         lastGpsDisplaySats = currentSats;
         lastGpsDisplayLock = currentLock;
         lastGpsDisplayConnected = currentConnected;
         lastGpsDisplayHasTime = currentHasTime;
-        lastGpsDisplaySearching = currentSearching;
-        lastGpsDisplaySleeping = currentSleeping;
-        lastGpsDisplayFreshSats = currentFreshSats;
 
         if (showingNormalScreen && screenOn) {
-            if (availabilityChanged || lockChanged || connectionChanged || hasTimeChanged || searchingChanged || sleepingChanged ||
-                freshSatsChanged) {
+            if (availabilityChanged || lockChanged || connectionChanged || hasTimeChanged) {
                 // Important semantic transitions (especially >0 -> 0 sats)
                 // must reach a physical E-Ink panel immediately.
                 forceDisplay(true);

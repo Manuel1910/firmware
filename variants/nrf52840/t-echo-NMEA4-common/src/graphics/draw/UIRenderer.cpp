@@ -522,6 +522,7 @@ extern uint32_t dopThresholds[5];
 void UIRenderer::drawGps(OLEDDisplay *display, int16_t x, int16_t y, const meshtastic::GPSStatus *gps, bool center)
 {
     char textString[12];
+    const bool gpsConnected = gps != nullptr && gps->getIsConnected();
     if (config.position.fixed_position) {
         // Fixed position overrides live GPS state, regardless of gps_mode
         snprintf(textString, sizeof(textString), "Fixed GPS");
@@ -529,15 +530,8 @@ void UIRenderer::drawGps(OLEDDisplay *display, int16_t x, int16_t y, const mesht
         snprintf(textString, sizeof(textString), "No GPS");
     } else if (config.position.gps_mode != meshtastic_Config_PositionConfig_GpsMode_ENABLED) {
         snprintf(textString, sizeof(textString), "GPS off");
-    } else if (!gps || !gps->getIsConnected()) {
+    } else if (!gpsConnected) {
         snprintf(textString, sizeof(textString), "No Lock");
-    } else if (gps->getIsSleeping()) {
-        // Runtime GNSS sleep is intentional energy saving, not lost UART data.
-        snprintf(textString, sizeof(textString), "GPS sleep");
-    } else if (gps->getIsSearching() && !gps->getHasFreshSatelliteData()) {
-        // Receiver has just woken (or NMEA has not resumed yet). Do not show
-        // the previous cycle's satellite count as if it were live.
-        snprintf(textString, sizeof(textString), "GPS search");
     } else if (gps->getNumSatellites() == 0) {
         // No position lock and no visible satellites are different states.
         // Show "No Sats" only when the published satellite count is really 0.
