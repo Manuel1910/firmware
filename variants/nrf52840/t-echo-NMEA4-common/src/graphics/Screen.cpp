@@ -44,7 +44,7 @@ extern NicheGraphics::BaseUIEInkDisplay *setupNicheGraphicsBaseUI();
 #include "DisplayFormatters.h"
 #include "TimeFormatters.h"
 #include "draw/ClockRenderer.h"
-#include "draw/DebugRenderer.h
+#include "draw/DebugRenderer.h"
 #include "draw/SatellitesRenderer.h"
 #include "draw/MenuHandler.h"
 #include "draw/MessageRenderer.h"
@@ -118,16 +118,10 @@ namespace graphics
 #define COMPASS_ACTIVE_FRAMERATE 20
 
 // DEBUG
-#if defined(TTGO_T_ECHO_PLUS) && defined(USE_EINK)
-#define T_ECHO_PLUS_EXTRA_FRAMES 2 // Satellites + Favorites Map
-#else
-#define T_ECHO_PLUS_EXTRA_FRAMES 0
-#endif
-
 #if BASEUI_HAS_GAMES
-#define NUM_EXTRA_FRAMES (4 + T_ECHO_PLUS_EXTRA_FRAMES)
+#define NUM_EXTRA_FRAMES 4 // text message, debug frame, and the always-present games frame
 #else
-#define NUM_EXTRA_FRAMES (3 + T_ECHO_PLUS_EXTRA_FRAMES)
+#define NUM_EXTRA_FRAMES 3 // text message and debug frame
 #endif
 // if defined a pixel will blink to show redraws
 // #define SHOW_REDRAWS
@@ -272,16 +266,9 @@ static inline float wrapDelta180(float delta)
     return delta;
 }
 
-// File-local freshness timestamp keeps this enhancement compatible with the
-// existing Screen.h API: hasHeading() still returns hasCompass.
-static uint32_t lastHardwareCompassUpdateMs = 0;
-
 void Screen::setHeading(float heading)
 {
     const float wrappedHeading = wrapHeading360(heading);
-    // Refresh even when the delta is below the display filter threshold: the
-    // sensor is alive even if the physical heading did not change.
-    lastHardwareCompassUpdateMs = millis();
 
     if (!hasCompass) {
         hasCompass = true;
@@ -497,25 +484,17 @@ static void drawGamesFrame(OLEDDisplay *display, OLEDDisplayUiState *state, int1
 #endif
 
 /**
- * Return the best non-magnetometer movement heading available.
+ * Given a recent lat/lon return a guess of the heading the user is walking on.
  *
- * Prefer fresh, checksum-valid Course-over-Ground while moving (RMC first,
- * VTG fallback), then fall back to the established 10 m position-baseline bearing.
+ * We keep a series of "after you've gone 10 meters, what is your heading since
+ * the last reference point?"
  */
 float Screen::estimatedHeading(double lat, double lon)
 {
     static double oldLat, oldLon;
-    static float positionHeading = -1.0f;
-    static uint32_t lastPositionHeadingAtMs = 0;
-
-    // Separate state for GNSS Course-over-Ground (RMC first, VTG fallback).
-    // Keeping this independent of
-    // the 10 m position baseline prevents one fallback from poisoning the
-    // other when the GNSS receiver sleeps or wakes again.
-    static float filteredRmcHeading = -1.0f;
-    static uint32_t lastRmcSampleMs = 0;
-
-    const uint32_t now = millis();
+    static float b = -1.0f;
+    static uint32_t lastHeadingAtMs = 0;
+    const uint32_t now = Time::stampMillis();
     const uint32_t gpsUpdateIntervalSecs =
         Default::getConfiguredOrDefault(config.position.gps_update_interval, default_gps_update_interval);
     uint32_t effectiveUpdateIntervalSecs = gpsUpdateIntervalSecs;
@@ -530,92 +509,31 @@ float Screen::estimatedHeading(double lat, double lon)
     const uint32_t headingStaleMs =
         (effectiveUpdateIntervalSecs > (UINT32_MAX / 2000U)) ? UINT32_MAX : (effectiveUpdateIntervalSecs * 2000U);
 
-#if !MESHTASTIC_EXCLUDE_GPS
-    // Preferred GPS fallback: checksum-valid fresh COG. GPS.h chooses RMC
-    // first and VTG only when RMC is missing/stale. COG is movement direction,
-    // so reject very low speeds where GNSS
-    // COG becomes noisy and let the longer 10 m position baseline take over.
-    if (gps) {
-        float rmcCourseDeg = 0.0f;
-        float rmcSpeedKmph = 0.0f;
-        uint32_t rmcSampleMs = 0;
-        if (gps->getFreshCourseOverGround(rmcCourseDeg, rmcSpeedKmph, rmcSampleMs)) {
-            constexpr float RMC_MIN_SPEED_KMPH = 1.5f;
-            if (rmcSpeedKmph >= RMC_MIN_SPEED_KMPH) {
-                // Only feed the filter once per actual GNSS COG sample. The UI can
-                // call estimatedHeading() much faster than the receiver emits NMEA.
-                if (rmcSampleMs != lastRmcSampleMs) {
-                    // After a long sleep/outage, adopt the first new course
-                    // directly instead of slowly blending from an hours-old heading.
-                    if (filteredRmcHeading < 0.0f || lastRmcSampleMs == 0 || (uint32_t)(now - lastRmcSampleMs) > 10000U) {
-                        filteredRmcHeading = wrapHeading360(rmcCourseDeg);
-                    } else {
-                        const float delta = wrapDelta180(rmcCourseDeg - filteredRmcHeading);
-                        const float absDelta = (delta >= 0.0f) ? delta : -delta;
-
-                        // Speed-adaptive circular smoothing. Walking gets more
-                        // damping; faster motion follows turns more promptly.
-                        float alpha = 0.35f;
-                        float maxStep = 30.0f;
-                        if (rmcSpeedKmph >= 15.0f) {
-                            alpha = 0.75f;
-                            maxStep = 120.0f;
-                        } else if (rmcSpeedKmph >= 5.0f) {
-                            alpha = 0.55f;
-                            maxStep = 60.0f;
-                        }
-
-                        // A large, clearly intentional turn should not be
-                        // over-damped, especially once moving at useful speed.
-                        if (absDelta > 60.0f && rmcSpeedKmph >= 5.0f)
-                            alpha = (alpha < 0.75f) ? 0.75f : alpha;
-
-                        float step = delta * alpha;
-                        if (step > maxStep)
-                            step = maxStep;
-                        else if (step < -maxStep)
-                            step = -maxStep;
-
-                        filteredRmcHeading = wrapHeading360(filteredRmcHeading + step);
-                    }
-                    lastRmcSampleMs = rmcSampleMs;
-                }
-                return filteredRmcHeading;
-            }
-        }
-    }
-
-    // Do not carry an old COG filter state across a long receiver sleep. A new
-    // valid RMC/VTG sample after wake will then become the new heading immediately.
-    if (lastRmcSampleMs != 0 && (uint32_t)(now - lastRmcSampleMs) > 10000U) {
-        filteredRmcHeading = -1.0f;
-        lastRmcSampleMs = 0;
-    }
-#endif
-
-    // Final fallback: infer movement direction from two positions at least
-    // 10 metres apart. This also works with a valid external/phone position.
     if (oldLat == 0) {
+        // Need at least two position points before we can infer heading.
         oldLat = lat;
         oldLon = lon;
-        return positionHeading;
+
+        return b;
     }
 
-    const float d = GeoCoord::latLongToMeter(oldLat, oldLon, lat, lon);
-    if (d < 10) {
-        if (lastPositionHeadingAtMs != 0 && (now - lastPositionHeadingAtMs) >= headingStaleMs) {
-            positionHeading = -1.0f;
+    float d = GeoCoord::latLongToMeter(oldLat, oldLon, lat, lon);
+    if (d < 10) { // haven't moved enough, keep previous heading (invalid until first real movement)
+        if (lastHeadingAtMs != 0 && (now - lastHeadingAtMs) >= headingStaleMs) {
+            // Heading is stale after prolonged no-movement; force reacquire.
+            b = -1.0f;
             oldLat = lat;
             oldLon = lon;
         }
-        return positionHeading;
+        return b;
     }
 
-    positionHeading = GeoCoord::bearing(oldLat, oldLon, lat, lon) * RAD_TO_DEG;
+    b = GeoCoord::bearing(oldLat, oldLon, lat, lon) * RAD_TO_DEG;
     oldLat = lat;
     oldLon = lon;
-    lastPositionHeadingAtMs = now;
-    return positionHeading;
+    lastHeadingAtMs = now;
+
+    return b;
 }
 
 /// We will skip one node - the one for us, so we just blindly loop over all
@@ -714,6 +632,9 @@ Screen::Screen(ScanI2C::DeviceAddress address, meshtastic_Config_DisplayConfig_O
     isI2cScreen = true;
 #else
     dispdev = new AutoOLEDWire(address.address, -1, -1, geometry,
+                               (address.port == ScanI2C::I2CPort::WIRE1) ? HW_I2C::I2C_TWO : HW_I2C::I2C_ONE);
+    isAUTOOled = true;
+    isI2cScreen = true;
 #endif
 
 #if defined(USE_ST7789)
@@ -762,12 +683,13 @@ void Screen::handleSetOn(bool on, FrameCallback einkScreensaver)
         if (on) {
             LOG_INFO("Turn on screen");
             powerMon->setState(meshtastic_PowerMon_State_Screen_On);
-#ifdef T_WATCH_S3
-            PMU->enablePowerOutput(XPOWERS_ALDO2);
+#if defined(T_WATCH_S3) || defined(T_WATCH_ULTRA)
+            if (PMU) // cleared when both AXP init attempts failed
+                PMU->enablePowerOutput(XPOWERS_ALDO2);
 #endif
 
 // some screens seem to need a kick in the pants to turn back on
-#if defined(MUZI_BASE) || defined(M5STACK_CARDPUTER_ADV)
+#if defined(MUZI_BASE) || defined(M5STACK_CARDPUTER_ADV) || defined(TFT_RESET_AFTER_SLEEP)
             dispdev->init();
             dispdev->setBrightness(brightness);
             dispdev->flipScreenVertically();
@@ -786,14 +708,8 @@ void Screen::handleSetOn(bool on, FrameCallback einkScreensaver)
             dispdev->displayOn();
 #endif
 
-#if HAS_PWM_BACKLIGHT
+#if HAS_BACKLIGHT
             graphics::backlightOn();
-#elif defined(PIN_EINK_EN)
-            if (uiconfig.screen_brightness == 1)
-                digitalWrite(PIN_EINK_EN, HIGH);
-#elif defined(PCA_PIN_EINK_EN)
-            if (uiconfig.screen_brightness > 0)
-                io.digitalWrite(PCA_PIN_EINK_EN, HIGH);
 #endif
 
 #if defined(ST7789_CS) &&                                                                                                        \
@@ -852,12 +768,8 @@ void Screen::handleSetOn(bool on, FrameCallback einkScreensaver)
             drawLockdownLockScreen(dispdev);
 #endif
 
-#if HAS_PWM_BACKLIGHT
+#if HAS_BACKLIGHT
             graphics::backlightOff();
-#elif defined(PIN_EINK_EN)
-            digitalWrite(PIN_EINK_EN, LOW);
-#elif defined(PCA_PIN_EINK_EN)
-            io.digitalWrite(PCA_PIN_EINK_EN, LOW);
 #endif
 
             dispdev->displayOff();
@@ -900,7 +812,7 @@ void Screen::handleSetOn(bool on, FrameCallback einkScreensaver)
 #endif
 #endif
 
-#ifdef T_WATCH_S3
+#if defined(T_WATCH_S3) // on T_WATCH_ULTRA, powering down this pin seems to goober the i2c bus.
             PMU->disablePowerOutput(XPOWERS_ALDO2);
 #endif
             enabled = false;
@@ -914,6 +826,11 @@ void Screen::setup()
 
     // Enable display rendering
     useDisplay = true;
+
+#if HAS_BACKLIGHT
+    // Settles uiconfig.screen_brightness for GPIO backlights, so read it only after this
+    graphics::backlightInit();
+#endif
 
     // Load saved brightness from UI config
     // For OLED displays (SSD1306), default brightness is 255 if not set
@@ -1166,13 +1083,6 @@ static uint32_t lastScreenTransition;
 
 int32_t Screen::runOnce()
 {
-    // A hardware heading is preferred only while the sensor keeps updating.
-    // If it stops for 3 s, release hasCompass so CompassRenderer can use the
-    // GPS/RMC fallback. A later sensor sample immediately takes priority again.
-    constexpr uint32_t COMPASS_SENSOR_MAX_AGE_MS = 3000U;
-    if (hasCompass && (uint32_t)(millis() - lastHardwareCompassUpdateMs) > COMPASS_SENSOR_MAX_AGE_MS)
-        hasCompass = false;
-
     // If we don't have a screen, don't ever spend any CPU for us.
     if (!useDisplay) {
         textMessageFrameShown = false;
@@ -1477,6 +1387,7 @@ void Screen::setFrames(FrameFocus focus)
         return;
     }
 
+    const FramesetInfo previousFramesetInfo = framesetInfo;
     uint8_t originalPosition = ui->getUiState()->currentFrame;
     uint8_t previousFrameCount = framesetInfo.frameCount;
     FramesetInfo fsi; // Location of specific frames, for applying focus parameter
@@ -1589,22 +1500,7 @@ void Screen::setFrames(FrameFocus focus)
         indicatorIcons.push_back(icon_compass);
         PUSH_FRAME_TITLE("GPS");
     }
-
-#if defined(TTGO_T_ECHO_PLUS) && defined(USE_EINK)
-    fsi.positions.satellites = numframes;
-    normalFrames[numframes++] = graphics::SatellitesRenderer::drawFrame;
-    indicatorIcons.push_back(icon_compass);
-    PUSH_FRAME_TITLE("Satellites");
 #endif
-#endif
-
-#if defined(TTGO_T_ECHO_PLUS) && defined(USE_EINK)
-    fsi.positions.favoritesMap = numframes;
-    normalFrames[numframes++] = graphics::FavoritesMapRenderer::drawFrame;
-    indicatorIcons.push_back(icon_distance);
-    PUSH_FRAME_TITLE("Favorites Map");
-#endif
-
     if (RadioLibInterface::instance && !hiddenFrames.lora) {
         fsi.positions.lora = numframes;
         normalFrames[numframes++] = graphics::DebugRenderer::drawLoRaFocused;
@@ -1744,8 +1640,15 @@ void Screen::setFrames(FrameFocus focus)
         break;
 
     case FOCUS_PRESERVE:
-        //  No more adjustment - force stay on same index
-        if (previousFrameCount > fsi.frameCount) {
+        if (previousFramesetInfo.positions.waypoint == 255 && fsi.positions.waypoint != 255) {
+            const uint8_t target = originalPosition >= fsi.positions.waypoint ? originalPosition + 1 : originalPosition;
+            ui->switchToFrame(target);
+        } else if (previousFramesetInfo.positions.waypoint != 255 && fsi.positions.waypoint == 255) {
+            const uint8_t target = originalPosition > previousFramesetInfo.positions.waypoint
+                                       ? originalPosition - 1
+                                       : std::min<uint8_t>(originalPosition, fsi.frameCount - 1);
+            ui->switchToFrame(target);
+        } else if (previousFrameCount > fsi.frameCount) {
             ui->switchToFrame(originalPosition - 1);
         } else if (previousFrameCount < fsi.frameCount) {
             ui->switchToFrame(originalPosition + 1);
@@ -2202,79 +2105,6 @@ int Screen::handleStatusUpdate(const meshtastic::Status *arg)
         }
         break;
     }
-    case STATUS_TYPE_GPS: {
-#if !MESHTASTIC_EXCLUDE_GPS
-        // GPSStatus changes were observed but previously ignored here. On
-        // E-Ink that can leave the physical panel showing an old satellite
-        // number even though GPSStatus has already changed. Track only the
-        // display-relevant GPS fields so ordinary position updates do not
-        // force unnecessary E-Ink refreshes.
-        static bool gpsDisplayStateInitialized = false;
-        static uint32_t lastGpsDisplaySats = 0;
-        static bool lastGpsDisplayLock = false;
-        static bool lastGpsDisplayConnected = false;
-        static bool lastGpsDisplayHasTime = false;
-        static bool lastGpsDisplaySearching = false;
-        static bool lastGpsDisplaySleeping = false;
-        static bool lastGpsDisplayFreshSats = false;
-
-        if (!gpsStatus)
-            break;
-
-        const uint32_t currentSats = gpsStatus->getNumSatellites();
-        const bool currentLock = gpsStatus->getHasLock();
-        const bool currentConnected = gpsStatus->getIsConnected();
-        const bool currentHasTime = gpsStatus->getHasTime();
-        const bool currentSearching = gpsStatus->getIsSearching();
-        const bool currentSleeping = gpsStatus->getIsSleeping();
-        const bool currentFreshSats = gpsStatus->getHasFreshSatelliteData();
-
-        if (!gpsDisplayStateInitialized) {
-            lastGpsDisplaySats = currentSats;
-            lastGpsDisplayLock = currentLock;
-            lastGpsDisplayConnected = currentConnected;
-            lastGpsDisplayHasTime = currentHasTime;
-            lastGpsDisplaySearching = currentSearching;
-            lastGpsDisplaySleeping = currentSleeping;
-            lastGpsDisplayFreshSats = currentFreshSats;
-            gpsDisplayStateInitialized = true;
-            if (showingNormalScreen && screenOn)
-                forceDisplay(true);
-            break;
-        }
-
-        const bool countChanged = currentSats != lastGpsDisplaySats;
-        const bool availabilityChanged = (currentSats == 0) != (lastGpsDisplaySats == 0);
-        const bool lockChanged = currentLock != lastGpsDisplayLock;
-        const bool connectionChanged = currentConnected != lastGpsDisplayConnected;
-        const bool hasTimeChanged = currentHasTime != lastGpsDisplayHasTime;
-        const bool searchingChanged = currentSearching != lastGpsDisplaySearching;
-        const bool sleepingChanged = currentSleeping != lastGpsDisplaySleeping;
-        const bool freshSatsChanged = currentFreshSats != lastGpsDisplayFreshSats;
-
-        lastGpsDisplaySats = currentSats;
-        lastGpsDisplayLock = currentLock;
-        lastGpsDisplayConnected = currentConnected;
-        lastGpsDisplayHasTime = currentHasTime;
-        lastGpsDisplaySearching = currentSearching;
-        lastGpsDisplaySleeping = currentSleeping;
-        lastGpsDisplayFreshSats = currentFreshSats;
-
-        if (showingNormalScreen && screenOn) {
-            if (availabilityChanged || lockChanged || connectionChanged || hasTimeChanged || searchingChanged ||
-                sleepingChanged || freshSatsChanged) {
-                // Important semantic transitions (especially >0 -> 0 sats)
-                // must reach a physical E-Ink panel immediately.
-                forceDisplay(true);
-            } else if (countChanged) {
-                // A normal nonzero count change only schedules a prompt redraw;
-                // do not force a hardware refresh for every GPS position update.
-                setFastFramerate();
-            }
-        }
-#endif
-        break;
-    }
     }
 
     return 0;
@@ -2313,6 +2143,21 @@ int Screen::handleUIFrameEvent(const UIFrameEvent *event)
     }
 
     return 0;
+}
+
+// Only the environmental telemetry frame answers SELECT with a menu. A module frame that has none
+// must not claim the press, or every frame matched after it in the dispatch chain is unreachable.
+static bool moduleFrameHasMenu(size_t frame)
+{
+#if HAS_TELEMETRY && HAS_SENSOR && !MESHTASTIC_EXCLUDE_ENVIRONMENTAL_SENSOR
+    // moduleFrames bounds the module-frame region, before favorites are appended; its leading slots
+    // are nullptr padding for the built-in frames, so only a non-null entry is a real module frame.
+    const MeshModule *module = frame < moduleFrames.size() ? moduleFrames.at(frame) : nullptr;
+    return module != nullptr && environmentTelemetryModule != nullptr && environmentTelemetryModule->ownsFrame(module);
+#else
+    (void)frame;
+    return false;
+#endif
 }
 
 int Screen::handleInputEvent(const InputEvent *event)
@@ -2397,23 +2242,6 @@ int Screen::handleInputEvent(const InputEvent *event)
             return 0;
         }
     }
-
-#if defined(TTGO_T_ECHO_PLUS) && defined(USE_EINK)
-    // Favorites Map: use UP/DOWN for zoom while this frame has focus.
-    if (framesetInfo.positions.favoritesMap != 255 && ui->getUiState()->currentFrame == framesetInfo.positions.favoritesMap) {
-        if (event->inputEvent == INPUT_BROKER_UP) {
-            graphics::FavoritesMapRenderer::zoomIn();
-            setFastFramerate();
-            return 0;
-        }
-        if (event->inputEvent == INPUT_BROKER_DOWN) {
-            graphics::FavoritesMapRenderer::zoomOut();
-            setFastFramerate();
-            return 0;
-        }
-    }
-#endif
-
 #if defined(OLED_COMPACT_UI)
     // UP/DOWN on the compact position screen toggles compass vs coordinates+elevation
     if (graphics::isCompactPanel(dispdev) && ui->getUiState()->currentFrame == framesetInfo.positions.gps) {
@@ -2448,18 +2276,8 @@ int Screen::handleInputEvent(const InputEvent *event)
     // so long as a mesh module isn't using these events for some other purpose
     if (showingNormalScreen) {
 
-        // Ask any MeshModules if they're handling keyboard input right now
-        bool inputIntercepted = false;
-        for (MeshModule *module : moduleFrames) {
-            if (module && module->interceptingKeyboardInput())
-                inputIntercepted = true;
-        }
-#if BASEUI_HAS_GAMES
-        // The games frame isn't a moduleFrame, so check it explicitly: while a game is running it
-        // owns the D-pad (turns/pause) and we must not switch frames or open menus underneath it.
-        if (gamesModule && gamesModule->interceptingKeyboardInput())
-            inputIntercepted = true;
-#endif
+        // Ask any MeshModules (and the games frame) if they're handling keyboard input right now
+        const bool inputIntercepted = anyModuleInterceptingInput();
 
         // If no modules are using the input, move between frames
         if (!inputIntercepted) {
@@ -2560,16 +2378,8 @@ int Screen::handleInputEvent(const InputEvent *event)
                             menuHandler::textMessageBaseMenu();
                         }
                     }
-                    // moduleFrames.size() bounds the module-frame region, before favorites are appended; its leading
-                    // slots are nullptr padding for the built-in frames, so only a non-null entry is a real module frame.
-                } else if (this->ui->getUiState()->currentFrame < moduleFrames.size() &&
-                           moduleFrames.at(this->ui->getUiState()->currentFrame) != nullptr) {
-#if HAS_TELEMETRY && HAS_SENSOR && !MESHTASTIC_EXCLUDE_ENVIRONMENTAL_SENSOR
-                    const MeshModule *currentModule = moduleFrames.at(this->ui->getUiState()->currentFrame);
-                    if (environmentTelemetryModule != nullptr && environmentTelemetryModule->ownsFrame(currentModule)) {
-                        menuHandler::environmentTelemetryMenu();
-                    }
-#endif
+                } else if (moduleFrameHasMenu(this->ui->getUiState()->currentFrame)) {
+                    menuHandler::environmentTelemetryMenu();
                 } else if (framesetInfo.positions.firstFavorite != 255 &&
                            this->ui->getUiState()->currentFrame >= framesetInfo.positions.firstFavorite &&
                            this->ui->getUiState()->currentFrame <= framesetInfo.positions.lastFavorite) {
@@ -2584,6 +2394,9 @@ int Screen::handleInputEvent(const InputEvent *event)
                     menuHandler::nodeListMenu();
                 } else if (this->ui->getUiState()->currentFrame == framesetInfo.positions.wifi) {
                     menuHandler::wifiBaseMenu();
+                } else if (framesetInfo.positions.waypoint != 255 &&
+                           this->ui->getUiState()->currentFrame == framesetInfo.positions.waypoint) {
+                    menuHandler::waypointBaseMenu();
                 }
             } else if (event->inputEvent == INPUT_BROKER_BACK) {
                 showFrame(FrameDirection::PREVIOUS);
@@ -2625,6 +2438,47 @@ bool Screen::isTextMessageFrameShown() const
 bool Screen::isGamesFrameShown()
 {
     return framesetInfo.positions.games != 255 && ui && ui->getUiState()->currentFrame == framesetInfo.positions.games;
+}
+
+void Screen::showHomeFrame()
+{
+    if (!ui)
+        return;
+    // Home is optional -- setFrames() only adds it when !hiddenFrames.home, leaving the position
+    // 255. Bouncing to nothing would strand the caller on the frame it wanted to leave, so fall
+    // back to the messages frame, which setFrames() always adds.
+    const uint8_t target =
+        (framesetInfo.positions.home != 255) ? framesetInfo.positions.home : framesetInfo.positions.textMessage;
+    if (target != 255)
+        ui->switchToFrame(target);
+}
+
+bool Screen::anyModuleInterceptingInput()
+{
+    for (MeshModule *module : moduleFrames) {
+        if (module && module->interceptingKeyboardInput())
+            return true;
+    }
+#if BASEUI_HAS_GAMES
+    // The games frame isn't a moduleFrame, so check it explicitly: while a game is running it owns
+    // the D-pad (turns/pause) and we must not switch frames or open menus underneath it.
+    if (gamesModule && gamesModule->interceptingKeyboardInput())
+        return true;
+#endif
+    return false;
+}
+
+bool Screen::isInteractionBusy()
+{
+    // Something is holding the D-pad -- the user is mid-interaction. A modal module owns the whole
+    // screen; an intercepting one owns the keys on its own frame.
+    if (hasModalModule() || anyModuleInterceptingInput())
+        return true;
+    // An interactive overlay (picker / text entry) is open. Showing a transient banner REPLACES the
+    // active overlay, so this would silently discard whatever the user was entering. A plain
+    // text_banner is itself transient, so superseding one of those is fine.
+    const notificationTypeEnum nt = NotificationRenderer::current_notification_type;
+    return nt != notificationTypeEnum::none && nt != notificationTypeEnum::text_banner;
 }
 
 } // namespace graphics
