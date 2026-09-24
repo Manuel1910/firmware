@@ -175,6 +175,7 @@ void ReliableRouter::sniffReceived(const meshtastic_MeshPacket *p, const meshtas
 
         // We intentionally don't check wasSeenRecently, because it is harmless to delete non existent retransmission records
         if ((ackId || nakId) && ackProofPermitsAction(p, ackId ? ackId : nakId, ackId != 0) &&
+        if ((ackId || nakId) && ackProofPermitsAction(p, ackId ? ackId : nakId, ackId != 0) &&
             // Implicit ACKs from MQTT should not stop retransmissions
             !(isFromUs(p) && p->transport_mechanism == meshtastic_MeshPacket_TransportMechanism_TRANSPORT_MQTT)) {
             LOG_DEBUG("Received a %s for 0x%08x, stopping retransmissions", ackId ? "ACK" : "NAK", ackId);
@@ -192,30 +193,6 @@ void ReliableRouter::sniffReceived(const meshtastic_MeshPacket *p, const meshtas
 
     // handle the packet as normal
     isBroadcast(p->to) ? FloodingRouter::sniffReceived(p, c) : NextHopRouter::sniffReceived(p, c);
-}
-
-#if !(MESHTASTIC_EXCLUDE_PKI)
-static meshtastic_MeshPacket_AckProofStatus toAckProofStatus(AckProofResult result)
-{
-    switch (result) {
-    case AckProofResult::VALID:
-        return meshtastic_MeshPacket_AckProofStatus_ACK_PROOF_VALID;
-    case AckProofResult::INVALID:
-        return meshtastic_MeshPacket_AckProofStatus_ACK_PROOF_INVALID;
-    case AckProofResult::NO_KEY:
-        return meshtastic_MeshPacket_AckProofStatus_ACK_PROOF_NO_KEY;
-    case AckProofResult::ABSENT:
-        break;
-    }
-    return meshtastic_MeshPacket_AckProofStatus_ACK_PROOF_ABSENT;
-}
-#endif
-
-meshtastic_MeshPacket_AckProofStatus ReliableRouter::ackProofStatusFor(const meshtastic_MeshPacket &p) const
-{
-    if (lastAckProof.from == getFrom(&p) && lastAckProof.id == p.id)
-        return lastAckProof.status;
-    return meshtastic_MeshPacket_AckProofStatus_ACK_PROOF_ABSENT;
 }
 
 bool ReliableRouter::ackProofPermitsAction(const meshtastic_MeshPacket *p, PacketId originalId, bool isAck)
@@ -275,9 +252,7 @@ bool ReliableRouter::ackProofPermitsAction(const meshtastic_MeshPacket *p, Packe
     }
 
     // Safe to key off getFrom(p) below only because it is now known equal to orig->packet->to.
-    const AckProofResult verdict = ackProofVerify(p, originalId);
-    lastAckProof = {getFrom(p), p->id, toAckProofStatus(verdict)};
-    switch (verdict) {
+    switch (ackProofVerify(p, originalId)) {
     case AckProofResult::VALID:
         LOG_DEBUG("ACK proof OK for 0x%08x", originalId);
         return true;
@@ -299,6 +274,7 @@ bool ReliableRouter::ackProofPermitsAction(const meshtastic_MeshPacket *p, Packe
 #else
     (void)p;
     (void)originalId;
+    (void)isAck;
     (void)isAck;
 #endif
     return true;
