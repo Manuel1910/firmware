@@ -45,11 +45,11 @@ extern NicheGraphics::BaseUIEInkDisplay *setupNicheGraphicsBaseUI();
 #include "TimeFormatters.h"
 #include "draw/ClockRenderer.h"
 #include "draw/DebugRenderer.h"
-#include "draw/SatellitesRenderer.h"
 #include "draw/MenuHandler.h"
 #include "draw/MessageRenderer.h"
 #include "draw/NodeListRenderer.h"
 #include "draw/NotificationRenderer.h"
+#include "draw/SatellitesRenderer.h"
 #include "draw/UIRenderer.h"
 #include "graphics/TFTColorRegions.h"
 #include "modules/CannedMessageModule.h"
@@ -1500,10 +1500,10 @@ void Screen::setFrames(FrameFocus focus)
         indicatorIcons.push_back(icon_compass);
         PUSH_FRAME_TITLE("GPS");
     }
-   
-#if defined(USE_EINK)
+
+#ifdef USE_EINK
     // FramePositions has no satellites member. Keep this frame untracked.
-    normalFrames[numframes++] = graphics::SatellitesRenderer::drawFrame;
+    normalFrames[numframes++] = graphics::SatellitesRenderer::drawSatellitesInfoScreen;
     indicatorIcons.push_back(icon_compass);
     PUSH_FRAME_TITLE("Satellites");
 #endif
