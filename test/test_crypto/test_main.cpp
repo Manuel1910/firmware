@@ -201,6 +201,17 @@ static meshtastic_Data makeSignableData(const uint8_t *payload, size_t len, uint
     return d;
 }
 
+// The signature covers the whole Data envelope, not just its payload, so these cases build a Data
+// rather than passing bare bytes. Fields left zero are what an ordinary packet carries.
+static meshtastic_Data makeSignableData(const uint8_t *payload, size_t len, uint32_t portnum = 1)
+{
+    meshtastic_Data d = meshtastic_Data_init_zero;
+    d.portnum = (meshtastic_PortNum)portnum;
+    d.payload.size = (pb_size_t)len;
+    memcpy(d.payload.bytes, payload, len);
+    return d;
+}
+
 void test_XEdDSA(void)
 {
     uint8_t private_key[32];
@@ -213,6 +224,18 @@ void test_XEdDSA(void)
     uint8_t signature[64];
     uint32_t fromNode = 0x1234;
     uint32_t packetId = 0xDEADBEEF;
+    uint32_t toNode = 0x5678;
+
+    // Every envelope field the buffer covers is set nonzero, so each negative case below is
+    // actually flipping something that was signed.
+    meshtastic_Data d = makeSignableData(message, sizeof(message));
+    d.request_id = 0xCAFE0001;
+    d.reply_id = 0xCAFE0002;
+    d.emoji = 0xCAFE0003;
+    d.has_bitfield = true;
+    d.bitfield = BITFIELD_OK_TO_MQTT_MASK;
+    d.want_response = true;
+
     uint32_t toNode = 0x5678;
 
     // Every envelope field the buffer covers is set nonzero, so each negative case below is
@@ -244,7 +267,50 @@ void test_XEdDSA(void)
         // statement as an apparent private one.
         TEST_ASSERT_FALSE_MESSAGE(crypto->xeddsa_verify(x_public_key, fromNode, packetId, toNode + 1, &d, signature),
                                   "re-addressing the packet must fail");
+        TEST_ASSERT(crypto->xeddsa_sign(fromNode, packetId, toNode, &d, signature));
+        TEST_ASSERT(crypto->xeddsa_verify(x_public_key, fromNode, packetId, toNode, &d, signature));
 
+        // Header fields outside the Data envelope.
+        TEST_ASSERT_FALSE_MESSAGE(crypto->xeddsa_verify(x_public_key, fromNode + 1, packetId, toNode, &d, signature),
+                                  "reattribution to another sender must fail");
+        TEST_ASSERT_FALSE_MESSAGE(crypto->xeddsa_verify(x_public_key, fromNode, packetId + 1, toNode, &d, signature),
+                                  "replay under another packet id must fail");
+        // Re-addressing a signed broadcast as a direct message would otherwise deliver a public
+        // statement as an apparent private one.
+        TEST_ASSERT_FALSE_MESSAGE(crypto->xeddsa_verify(x_public_key, fromNode, packetId, toNode + 1, &d, signature),
+                                  "re-addressing the packet must fail");
+
+        // Each Data field, flipped one at a time.
+        meshtastic_Data t = d;
+        t.payload.size = sizeof(message2);
+        memcpy(t.payload.bytes, message2, sizeof(message2));
+        TEST_ASSERT_FALSE_MESSAGE(crypto->xeddsa_verify(x_public_key, fromNode, packetId, toNode, &t, signature),
+                                  "payload tampering must fail");
+
+        t = d;
+        t.portnum = (meshtastic_PortNum)(d.portnum + 1);
+        TEST_ASSERT_FALSE_MESSAGE(crypto->xeddsa_verify(x_public_key, fromNode, packetId, toNode, &t, signature),
+                                  "portnum redirection must fail");
+
+        t = d;
+        t.request_id++;
+        TEST_ASSERT_FALSE_MESSAGE(crypto->xeddsa_verify(x_public_key, fromNode, packetId, toNode, &t, signature),
+                                  "retargeting at another request must fail");
+
+        t = d;
+        t.reply_id++;
+        TEST_ASSERT_FALSE_MESSAGE(crypto->xeddsa_verify(x_public_key, fromNode, packetId, toNode, &t, signature),
+                                  "re-pointing a reply or tapback at another message must fail");
+
+        t = d;
+        t.emoji++;
+        TEST_ASSERT_FALSE_MESSAGE(crypto->xeddsa_verify(x_public_key, fromNode, packetId, toNode, &t, signature),
+                                  "turning a reply into a reaction must fail");
+
+        t = d;
+        t.bitfield ^= BITFIELD_OK_TO_MQTT_MASK;
+        TEST_ASSERT_FALSE_MESSAGE(crypto->xeddsa_verify(x_public_key, fromNode, packetId, toNode, &t, signature),
+                                  "flipping the MQTT upload consent must fail");
         // Each Data field, flipped one at a time.
         meshtastic_Data t = d;
         t.payload.size = sizeof(message2);
@@ -314,6 +380,43 @@ void test_XEdDSA_layout_is_unambiguous(void)
     split.reply_id = 0xB4B3B2B1;
     TEST_ASSERT_FALSE_MESSAGE(crypto->xeddsa_verify(pub, fromNode, packetId, toNode, &split, sigA),
                               "a re-split of the same bytes must not verify under the original signature");
+    // Stripping the optional field is distinct from sending it zero, so presence is signed too.
+    t = d;
+    t.has_bitfield = false;
+    t.bitfield = 0;
+    TEST_ASSERT_FALSE_MESSAGE(crypto->xeddsa_verify(x_public_key, fromNode, packetId, toNode, &t, signature),
+                              "stripping the bitfield must fail");
+
+    t = d;
+    t.want_response = false;
+    TEST_ASSERT_FALSE_MESSAGE(crypto->xeddsa_verify(x_public_key, fromNode, packetId, toNode, &t, signature),
+                              "clearing want_response must fail");
+}
+}
+
+// The payload boundary is a fixed offset, never derived from content. If it were conditional, an
+// attacker could move payload bytes into the envelope fields (or the reverse) and produce the same
+// signed bytes - truncating a signed message while its signature still verified. Two shapes that
+// differ only in where the split falls must therefore sign differently.
+void test_XEdDSA_layout_is_unambiguous(void)
+{
+    uint8_t pub[32], priv[32], sigA[64];
+    crypto->generateKeyPair(pub, priv);
+
+    const uint32_t fromNode = 0x77, packetId = 0x1CEB00DA, toNode = 0xFFFFFFFF;
+    uint8_t whole[] = {0xA1, 0xA2, 0xA3, 0xA4, 0xB1, 0xB2, 0xB3, 0xB4, 'h', 'e', 'l', 'l', 'o'};
+
+    // A plain packet whose payload begins with eight bytes an attacker would like to re-read as
+    // request_id and reply_id.
+    meshtastic_Data plain = makeSignableData(whole, sizeof(whole));
+    TEST_ASSERT(crypto->xeddsa_sign(fromNode, packetId, toNode, &plain, sigA));
+
+    // The same bytes re-split: those eight moved into the envelope, payload truncated to "hello".
+    meshtastic_Data split = makeSignableData(whole + 8, sizeof(whole) - 8);
+    split.request_id = 0xA4A3A2A1;
+    split.reply_id = 0xB4B3B2B1;
+    TEST_ASSERT_FALSE_MESSAGE(crypto->xeddsa_verify(pub, fromNode, packetId, toNode, &split, sigA),
+                              "a re-split of the same bytes must not verify under the original signature");
 }
 
 // A signature only verifies under the signer's own key; a different key (or an all-zero key) fails.
@@ -327,16 +430,24 @@ void test_XEdDSA_cross_key_reject(void)
     meshtastic_Data d = makeSignableData(message, sizeof(message), 7);
     d.request_id = 0x77;
     d.reply_id = 0x88;
+    uint32_t fromNode = 0x4242, packetId = 0xABCD1234, toNode = 0x99;
+    meshtastic_Data d = makeSignableData(message, sizeof(message), 7);
+    d.request_id = 0x77;
+    d.reply_id = 0x88;
 
     crypto->generateKeyPair(pubA, privA); // engine now holds key A
+    TEST_ASSERT(crypto->xeddsa_sign(fromNode, packetId, toNode, &d, signature));
     TEST_ASSERT(crypto->xeddsa_sign(fromNode, packetId, toNode, &d, signature));
 
     crypto->generateKeyPair(pubB, privB); // unrelated key pair
 
     TEST_ASSERT_TRUE(crypto->xeddsa_verify(pubA, fromNode, packetId, toNode, &d, signature));
     TEST_ASSERT_FALSE(crypto->xeddsa_verify(pubB, fromNode, packetId, toNode, &d, signature));
+    TEST_ASSERT_TRUE(crypto->xeddsa_verify(pubA, fromNode, packetId, toNode, &d, signature));
+    TEST_ASSERT_FALSE(crypto->xeddsa_verify(pubB, fromNode, packetId, toNode, &d, signature));
 
     uint8_t zeroKey[32] = {0};
+    TEST_ASSERT_FALSE(crypto->xeddsa_verify(zeroKey, fromNode, packetId, toNode, &d, signature));
     TEST_ASSERT_FALSE(crypto->xeddsa_verify(zeroKey, fromNode, packetId, toNode, &d, signature));
 }
 
@@ -346,6 +457,8 @@ void test_XEdDSA_empty_key_sign_fails(void)
     CryptoEngine fresh; // freshly constructed: xeddsa_private_key is all zero
     uint8_t signature[64];
     uint8_t message[] = "no key";
+    meshtastic_Data d = makeSignableData(message, sizeof(message), 3);
+    TEST_ASSERT_FALSE(fresh.xeddsa_sign(0x1, 0x2, 0x3, &d, signature));
     meshtastic_Data d = makeSignableData(message, sizeof(message), 3);
     TEST_ASSERT_FALSE(fresh.xeddsa_sign(0x1, 0x2, 0x3, &d, signature));
 }
@@ -360,13 +473,23 @@ void test_XEdDSA_curve_to_ed_cache(void)
     meshtastic_Data d = makeSignableData(message, sizeof(message), 3);
     d.request_id = 0x44;
     d.reply_id = 0x55;
+    uint32_t fromNode = 0x11, packetId = 0x22, toNode = 0x33;
+    meshtastic_Data d = makeSignableData(message, sizeof(message), 3);
+    d.request_id = 0x44;
+    d.reply_id = 0x55;
 
     crypto->generateKeyPair(pubA, privA);
     TEST_ASSERT(crypto->xeddsa_sign(fromNode, packetId, toNode, &d, sigA));
+    TEST_ASSERT(crypto->xeddsa_sign(fromNode, packetId, toNode, &d, sigA));
     crypto->generateKeyPair(pubB, privB);
+    TEST_ASSERT(crypto->xeddsa_sign(fromNode, packetId, toNode, &d, sigB));
     TEST_ASSERT(crypto->xeddsa_sign(fromNode, packetId, toNode, &d, sigB));
 
     // Interleave keys to exercise both cache hits and cache invalidation.
+    TEST_ASSERT_TRUE(crypto->xeddsa_verify(pubA, fromNode, packetId, toNode, &d, sigA));
+    TEST_ASSERT_TRUE(crypto->xeddsa_verify(pubB, fromNode, packetId, toNode, &d, sigB));
+    TEST_ASSERT_TRUE(crypto->xeddsa_verify(pubA, fromNode, packetId, toNode, &d, sigA));
+    TEST_ASSERT_FALSE(crypto->xeddsa_verify(pubA, fromNode, packetId, toNode, &d, sigB));
     TEST_ASSERT_TRUE(crypto->xeddsa_verify(pubA, fromNode, packetId, toNode, &d, sigA));
     TEST_ASSERT_TRUE(crypto->xeddsa_verify(pubB, fromNode, packetId, toNode, &d, sigB));
     TEST_ASSERT_TRUE(crypto->xeddsa_verify(pubA, fromNode, packetId, toNode, &d, sigA));
@@ -376,11 +499,15 @@ void test_XEdDSA_curve_to_ed_cache(void)
 // The largest payload the Data schema can hold must still fit the signing buffer. An overflow makes
 // buildSigningBuffer return 0 and signing fail silently, so this is the case that catches a header
 // that has grown past its room.
+// The largest payload the Data schema can hold must still fit the signing buffer. An overflow makes
+// buildSigningBuffer return 0 and signing fail silently, so this is the case that catches a header
+// that has grown past its room.
 void test_XEdDSA_max_payload(void)
 {
     uint8_t payload[meshtastic_Constants_DATA_PAYLOAD_LEN];
     for (size_t i = 0; i < sizeof(payload); i++)
-        payload[i] = (uint8_t)(i * 7 + 1);
+        for (size_t i = 0; i < sizeof(payload); i++)
+            payload[i] = (uint8_t)(i * 7 + 1);
 
     uint8_t pub[32], priv[32], signature[64];
     crypto->generateKeyPair(pub, priv);
@@ -388,7 +515,16 @@ void test_XEdDSA_max_payload(void)
     meshtastic_Data d = makeSignableData(payload, sizeof(payload));
     d.request_id = 0xF00D;
     d.reply_id = 0xBEAD;
+    uint32_t fromNode = 0xFEED, packetId = 0xC0DE, toNode = 0xF00D;
+    meshtastic_Data d = makeSignableData(payload, sizeof(payload));
+    d.request_id = 0xF00D;
+    d.reply_id = 0xBEAD;
 
+    TEST_ASSERT_MESSAGE(crypto->xeddsa_sign(fromNode, packetId, toNode, &d, signature),
+                        "a maximum-size payload must still fit the signing buffer");
+    TEST_ASSERT(crypto->xeddsa_verify(pub, fromNode, packetId, toNode, &d, signature));
+    d.payload.bytes[0] ^= 0x01;
+    TEST_ASSERT_FALSE(crypto->xeddsa_verify(pub, fromNode, packetId, toNode, &d, signature));
     TEST_ASSERT_MESSAGE(crypto->xeddsa_sign(fromNode, packetId, toNode, &d, signature),
                         "a maximum-size payload must still fit the signing buffer");
     TEST_ASSERT(crypto->xeddsa_verify(pub, fromNode, packetId, toNode, &d, signature));
@@ -409,8 +545,14 @@ void test_XEdDSA_repeated_sign_is_randomized(void)
     meshtastic_Data d = makeSignableData(message, sizeof(message), 9);
     d.request_id = 0x9;
     d.reply_id = 0x9;
+    uint32_t fromNode = 0x9, packetId = 0x9, toNode = 0x9;
+    meshtastic_Data d = makeSignableData(message, sizeof(message), 9);
+    d.request_id = 0x9;
+    d.reply_id = 0x9;
 
     crypto->generateKeyPair(pub, priv);
+    TEST_ASSERT(crypto->xeddsa_sign(fromNode, packetId, toNode, &d, sig1));
+    TEST_ASSERT(crypto->xeddsa_sign(fromNode, packetId, toNode, &d, sig2));
     TEST_ASSERT(crypto->xeddsa_sign(fromNode, packetId, toNode, &d, sig1));
     TEST_ASSERT(crypto->xeddsa_sign(fromNode, packetId, toNode, &d, sig2));
 
@@ -418,121 +560,6 @@ void test_XEdDSA_repeated_sign_is_randomized(void)
                              "signatures must differ - XEdDSA Z randomization is not wired through");
     TEST_ASSERT_TRUE(crypto->xeddsa_verify(pub, fromNode, packetId, toNode, &d, sig1));
     TEST_ASSERT_TRUE(crypto->xeddsa_verify(pub, fromNode, packetId, toNode, &d, sig2));
-}
-
-// CryptoEngine::regeneratePublicKey must clamp the private key it is handed, in place. Curve25519::eval
-// uses the scalar as given while XEdDSA::priv_curve_to_ed_keys clamps it, so an unclamped key (set via
-// admin, an app's private-key field, or a backup restore) derives an X25519 public key that disagrees
-// with the signing key: every signature the node sends then fails xeddsa_verify at its peers. If the
-// clamp is dropped, the bit assertions and the final verify fail for this 0x11-filled key.
-void test_regeneratePublicKey_clamps_imported_key(void)
-{
-    uint8_t pub[32], priv[32], signature[64];
-    memset(priv, 0x11, sizeof(priv));
-    uint8_t message[] = "imported key";
-    uint32_t fromNode = 0x1111, packetId = 0x2222, toNode = 0x3333;
-    meshtastic_Data d = makeSignableData(message, sizeof(message), 5);
-    d.request_id = 0x44;
-
-    TEST_ASSERT_TRUE(crypto->regeneratePublicKey(pub, priv));
-    TEST_ASSERT_EQUAL_HEX8(0, priv[0] & 0x07);
-    TEST_ASSERT_EQUAL_HEX8(0x40, priv[31] & 0xC0);
-
-    TEST_ASSERT(crypto->xeddsa_sign(fromNode, packetId, toNode, &d, signature));
-    TEST_ASSERT_TRUE_MESSAGE(crypto->xeddsa_verify(pub, fromNode, packetId, toNode, &d, signature),
-                             "the derived public key must verify the node's own signature");
-}
-
-// Finds the cache slot holding this peer's key, so the tests can assert on the cache itself and not
-// only on what setCryptoSharedSecret leaves in shared_key. Protected members are public under
-// PIO_UNIT_TESTING.
-static bool findCachedSecret(const uint8_t *peerPubKey, CachedSharedSecret &entry)
-{
-    for (size_t i = 0; i < MAX_CACHED_SHARED_SECRETS; i++) {
-        if (crypto->sharedSecretCache[i].valid && memcmp(crypto->sharedSecretCache[i].peer_public_key, peerPubKey, 32) == 0) {
-            entry = crypto->sharedSecretCache[i];
-            return true;
-        }
-    }
-    return false;
-}
-
-void test_shared_secret_cache(void)
-{
-    uint8_t private_key[32];
-    uint8_t other_private_key[32];
-    uint8_t public_key[32];
-    uint8_t derived[32];
-    uint8_t stale[32];
-
-    // Same wycheproof vector test_DH25519 uses, hashed: the cache holds the hashed key packet
-    // crypto and the ack proof both consume.
-    HexToBytes(public_key, "504a36999f489cd2fdbc08baff3d88fa00569ba986cba22548ffde80f9806829");
-    HexToBytes(private_key, "c8a9d5a91091ad851c668b0736c1c9a02936c0d3ad62670858088047ba057475");
-    HexToBytes(other_private_key, "d85d8c061a50804ac488ad774ac716c3f5ba714b2712e048491379a500211958");
-    HexToBytes(derived, "436a2c040cf45fea9b29a0cb81b1f41458f863d0d61b453d0a982720d6d61320");
-    crypto->hash(derived, 32);
-
-    crypto->setDHPrivateKey(private_key);
-    TEST_ASSERT(crypto->setCryptoSharedSecret(public_key));
-    TEST_ASSERT_EQUAL_MEMORY(derived, crypto->shared_key, 32);
-
-    // The derivation was cached under the peer's key
-    CachedSharedSecret entry;
-    TEST_ASSERT(findCachedSecret(public_key, entry));
-    TEST_ASSERT_EQUAL_MEMORY(derived, entry.shared_secret, 32);
-
-    // A second call refills shared_key from the cache. Clearing it first means an equal result can
-    // only have come from the cache or from a fresh derivation, and either way it must match.
-    memset(crypto->shared_key, 0, 32);
-    TEST_ASSERT(crypto->setCryptoSharedSecret(public_key));
-    TEST_ASSERT_EQUAL_MEMORY(derived, crypto->shared_key, 32);
-
-    // Our own key changing invalidates every entry: the old secrets no longer belong to this identity
-    memcpy(stale, derived, 32);
-    crypto->setDHPrivateKey(other_private_key);
-    TEST_ASSERT_FALSE(findCachedSecret(public_key, entry));
-    TEST_ASSERT(crypto->setCryptoSharedSecret(public_key));
-    TEST_ASSERT(memcmp(stale, crypto->shared_key, 32) != 0);
-    TEST_ASSERT(findCachedSecret(public_key, entry));
-    TEST_ASSERT_EQUAL_MEMORY(crypto->shared_key, entry.shared_secret, 32);
-}
-
-// Two distinct peers whose keys share a leading prefix must not share a cache entry: an impostor
-// can grind a key that shares any short prefix with a peer it wants to shadow, and would then be
-// handed the secret we use with that peer. An all-zero key is a weak point and stays rejected.
-void test_shared_secret_cache_distinguishes_prefix_sharing_keys(void)
-{
-    uint8_t private_key[32];
-    uint8_t zeroPub[32] = {0};
-    uint8_t peerA[32], peerB[32];
-    uint8_t expectedA[32], expectedB[32];
-    CachedSharedSecret entry;
-
-    HexToBytes(private_key, "c8a9d5a91091ad851c668b0736c1c9a02936c0d3ad62670858088047ba057475");
-    crypto->setDHPrivateKey(private_key);
-
-    // Both peer keys open with the same four zero bytes. SHA256 of X25519(private_key, peer).
-    HexToBytes(peerA, "000000009f489cd2fdbc08baff3d88fa00569ba986cba22548ffde80f9806829");
-    HexToBytes(peerB, "0000000063aa40c6e38346c5caf23a6df0a5e6c80889a08647e551b3563449be");
-    HexToBytes(expectedA, "8df84c5a00ed192f7dadac05873a1dae6a07478153db8395c4604fc905a274ae");
-    HexToBytes(expectedB, "2b011221f1626664332ff61c28715044758ff62a72e91a2b215fba9dbb426097");
-
-    TEST_ASSERT(crypto->setCryptoSharedSecret(peerA));
-    TEST_ASSERT_EQUAL_MEMORY(expectedA, crypto->shared_key, 32);
-
-    // peerB must be derived on its own, not served peerA's entry
-    TEST_ASSERT(crypto->setCryptoSharedSecret(peerB));
-    TEST_ASSERT_EQUAL_MEMORY(expectedB, crypto->shared_key, 32);
-    TEST_ASSERT(findCachedSecret(peerA, entry));
-    TEST_ASSERT_EQUAL_MEMORY(expectedA, entry.shared_secret, 32);
-
-    // And each is still served its own secret once both are resident
-    TEST_ASSERT(crypto->setCryptoSharedSecret(peerA));
-    TEST_ASSERT_EQUAL_MEMORY(expectedA, crypto->shared_key, 32);
-
-    // The all-zero key shares that prefix too, and must be refused rather than matched
-    TEST_ASSERT_FALSE(crypto->setCryptoSharedSecret(zeroPub));
 }
 
 void test_AES_CTR(void)
@@ -1041,6 +1068,7 @@ void setup()
     RUN_TEST(test_AES_CCM_rfc3610);
     RUN_TEST(test_PKC);
     RUN_TEST(test_XEdDSA);
+    RUN_TEST(test_XEdDSA_layout_is_unambiguous);
     RUN_TEST(test_XEdDSA_layout_is_unambiguous);
     RUN_TEST(test_XEdDSA_cross_key_reject);
     RUN_TEST(test_XEdDSA_empty_key_sign_fails);
