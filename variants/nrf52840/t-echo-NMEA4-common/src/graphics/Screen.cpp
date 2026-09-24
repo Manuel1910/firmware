@@ -119,9 +119,9 @@ namespace graphics
 
 // DEBUG
 #if BASEUI_HAS_GAMES
-#define NUM_EXTRA_FRAMES 4 // text message, debug frame, and the always-present games frame
+#define NUM_EXTRA_FRAMES 3 // text message, debug, and games frames
 #else
-#define NUM_EXTRA_FRAMES 3 // text message and debug frame
+#define NUM_EXTRA_FRAMES 2 // text message and debug frames
 #endif
 // if defined a pixel will blink to show redraws
 // #define SHOW_REDRAWS
@@ -550,7 +550,7 @@ SPIClass SPI1(HSPI);
 Screen::Screen(ScanI2C::DeviceAddress address, meshtastic_Config_DisplayConfig_OledType screenType, OLEDDISPLAY_GEOMETRY geometry)
     : concurrency::OSThread("Screen"), address_found(address), model(screenType), geometry(geometry), cmdQueue(32)
 {
-    graphics::normalFrames = new FrameCallback[MAX_NUM_NODES + NUM_EXTRA_FRAMES];
+    graphics::normalFrames = new FrameCallback[MAX_NUM_NODES + (BASEUI_HAS_GAMES ? 3 : 2)];
 
 #if defined(USE_SH1106) || defined(USE_SH1107) || defined(USE_SH1107_128_64)
     dispdev = new SH1106Wire(address.address, -1, -1, geometry,
@@ -1500,6 +1500,13 @@ void Screen::setFrames(FrameFocus focus)
         indicatorIcons.push_back(icon_compass);
         PUSH_FRAME_TITLE("GPS");
     }
+   
+#if defined(USE_EINK)
+    // FramePositions has no satellites member. Keep this frame untracked.
+    normalFrames[numframes++] = graphics::SatellitesRenderer::drawFrame;
+    indicatorIcons.push_back(icon_compass);
+    PUSH_FRAME_TITLE("Satellites");
+#endif
 #endif
     if (RadioLibInterface::instance && !hiddenFrames.lora) {
         fsi.positions.lora = numframes;
