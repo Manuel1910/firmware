@@ -119,9 +119,9 @@ namespace graphics
 
 // DEBUG
 #if BASEUI_HAS_GAMES
-#define NUM_EXTRA_FRAMES 3 // text message, debug, and games frames
+#define NUM_EXTRA_FRAMES 4 // text message, debug, and games frames
 #else
-#define NUM_EXTRA_FRAMES 2 // text message and debug frames
+#define NUM_EXTRA_FRAMES 3 // text message and debug frames
 #endif
 // if defined a pixel will blink to show redraws
 // #define SHOW_REDRAWS
