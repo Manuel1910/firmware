@@ -200,6 +200,194 @@ template <typename T> bool sawNmeaSentenceAtBaud(T *serialGps, uint32_t timeoutM
 }
 } // namespace
 
+<<<<<<< HEAD
+=======
+static uint16_t gnssQualityLowerIsBetter(uint16_t value, uint16_t best, uint16_t worst)
+{
+    if (value <= best)
+        return 1000;
+    if (value >= worst)
+        return 0;
+    return static_cast<uint16_t>(1000U - ((uint32_t)(value - best) * 1000U) / (worst - best));
+}
+
+static uint16_t gnssQualityHigherIsBetter(uint16_t value, uint16_t worst, uint16_t best)
+{
+    if (value <= worst)
+        return 0;
+    if (value >= best)
+        return 1000;
+    return static_cast<uint16_t>(((uint32_t)(value - worst) * 1000U) / (best - worst));
+}
+
+uint16_t GPS::calculateGnssFixQualityScore(uint8_t fixQuality, uint8_t fixType, uint16_t hdop, uint16_t pdop, uint16_t vdop) const
+{
+    uint32_t weighted = 0;
+    uint32_t totalWeight = 0;
+
+    auto add = [&weighted, &totalWeight](uint16_t component, uint16_t weight) {
+        weighted += (uint32_t)component * weight;
+        totalWeight += weight;
+    };
+
+    // Horizontal geometry matters most for a tracker.
+    if (hdop > 0)
+        add(gnssQualityLowerIsBetter(hdop, 60, 500), 300);
+    if (pdop > 0)
+        add(gnssQualityLowerIsBetter(pdop, 80, 700), 170);
+    if (vdop > 0)
+        add(gnssQualityLowerIsBetter(vdop, 100, 800), 50);
+
+    uint16_t used = reader.gsaSatellitesUsedTotal();
+    if (used == 0 && reader.satellites.isValid() && reader.satellites.age() <= TinyGPSPlus::AUX_DATA_MAX_AGE_MS)
+        used = static_cast<uint16_t>(reader.satellites.peekValue());
+    if (used > 0)
+        add(gnssQualityHigherIsBetter(used, 3, 16), 180);
+
+    const uint16_t tracked = reader.satellitesTracked();
+    if (tracked > 0)
+        add(gnssQualityHigherIsBetter(tracked, 4, 20), 50);
+
+    const uint16_t inView = reader.satellitesInView();
+    if (inView > 0)
+        add(gnssQualityHigherIsBetter(inView, 4, 28), 20);
+
+    // Prefer C/N0 from satellites explicitly marked "used in fix". If the
+    // receiver does not provide enough GSA mapping, fall back to all freshly
+    // tracked satellites at half weight.
+    uint8_t cn0[TINYGPS_MAX_SATS] = {};
+    size_t cn0Count = 0;
+    bool usedOnly = true;
+
+    for (size_t i = 0; i < TINYGPS_MAX_SATS; ++i) {
+        const auto &sat = reader.trackedSatellites[i];
+        if (!reader.isTrackedSatelliteFresh(sat) || !sat.tracked || sat.strength == 0)
+            continue;
+        if (reader.gsaSatelliteUsed(sat.system, sat.prn) && cn0Count < TINYGPS_MAX_SATS)
+            cn0[cn0Count++] = sat.strength;
+    }
+
+    if (cn0Count == 0) {
+        usedOnly = false;
+        for (size_t i = 0; i < TINYGPS_MAX_SATS; ++i) {
+            const auto &sat = reader.trackedSatellites[i];
+            if (reader.isTrackedSatelliteFresh(sat) && sat.tracked && sat.strength > 0 && cn0Count < TINYGPS_MAX_SATS)
+                cn0[cn0Count++] = sat.strength;
+        }
+    }
+
+    if (cn0Count > 0) {
+        // Small fixed-size insertion sort avoids allocation on the embedded target.
+        for (size_t i = 1; i < cn0Count; ++i) {
+            const uint8_t v = cn0[i];
+            size_t j = i;
+            while (j > 0 && cn0[j - 1] > v) {
+                cn0[j] = cn0[j - 1];
+                --j;
+            }
+            cn0[j] = v;
+        }
+
+        uint16_t median = cn0[cn0Count / 2];
+        if ((cn0Count & 1U) == 0)
+            median = static_cast<uint16_t>((cn0[cn0Count / 2 - 1] + cn0[cn0Count / 2]) / 2U);
+
+        add(gnssQualityHigherIsBetter(median, 15, 42), usedOnly ? 150 : 75);
+    }
+
+    if (fixType == 3)
+        add(1000, 50);
+    else if (fixType == 2)
+        add(500, 50);
+
+    switch (fixQuality) {
+    case 1:
+        add(750, 30);
+        break;
+    case 2:
+    case 3:
+        add(900, 30);
+        break;
+    case 4:
+        add(1000, 30);
+        break;
+    case 5:
+        add(950, 30);
+        break;
+    case 6:
+        add(350, 30);
+        break;
+    case 7:
+    case 8:
+        add(100, 30);
+        break;
+    default:
+        break;
+    }
+
+    if (totalWeight == 0)
+        return 0;
+
+    uint32_t score = (weighted + totalWeight / 2U) / totalWeight;
+    if (score > GNSS_QUALITY_MAX_SCORE)
+        score = GNSS_QUALITY_MAX_SCORE;
+    return static_cast<uint16_t>(score);
+}
+
+bool GPS::selectGnssQualityFix(const meshtastic_Position &candidate, uint16_t score, uint32_t sampleMs)
+{
+    GnssQualityFixCandidate incoming;
+    incoming.position = candidate;
+    incoming.score = score;
+    incoming.sampleMs = sampleMs;
+    incoming.valid = true;
+
+    auto accept = [this](const GnssQualityFixCandidate &chosen, const char *reason) {
+        qualityCurrentFix = chosen;
+        qualityFallbackFix = GnssQualityFixCandidate{};
+        p = chosen.position;
+        LOG_DEBUG_GPS("GNSS quality accepted: Q=%u/1000 (%s)", chosen.score, reason);
+    };
+
+    if (!qualityCurrentFix.valid) {
+        accept(incoming, "initial");
+        return true;
+    }
+
+    if ((uint32_t)(sampleMs - qualityCurrentFix.sampleMs) >= GNSS_QUALITY_MAX_HOLD_MS) {
+        // The current reference has lost its authority. If a distinctly worse
+        // fix was already buffered, do not discard it blindly: promote the
+        // better of that buffered fix and the newly arrived real receiver fix.
+        const GnssQualityFixCandidate chosen =
+            qualityFallbackFix.valid && qualityFallbackFix.score >= incoming.score ? qualityFallbackFix : incoming;
+        accept(chosen, qualityFallbackFix.valid ? "hold timeout best pending" : "hold timeout");
+        return true;
+    }
+
+    if ((uint32_t)score + GNSS_QUALITY_EQUIVALENT_MARGIN >= qualityCurrentFix.score) {
+        accept(incoming, score >= qualityCurrentFix.score ? "better" : "equivalent");
+        return true;
+    }
+
+    if (!qualityFallbackFix.valid) {
+        qualityFallbackFix = incoming;
+        p = qualityCurrentFix.position;
+        LOG_DEBUG_GPS("GNSS quality buffered: new=%u current=%u", score, qualityCurrentFix.score);
+        return false;
+    }
+
+    const GnssQualityFixCandidate chosen = qualityFallbackFix.score >= incoming.score ? qualityFallbackFix : incoming;
+    accept(chosen, "confirmed lower quality");
+    return true;
+}
+
+void GPS::resetGnssQualityFilter()
+{
+    qualityCurrentFix = GnssQualityFixCandidate{};
+    qualityFallbackFix = GnssQualityFixCandidate{};
+}
+
+>>>>>>> d96c2ab35217c761c7c1d478e33a6a43da5c37dc
 // For logging
 static const char *getGPSPowerStateString(GPSPowerState state)
 {
@@ -2461,6 +2649,16 @@ bool GPS::lookForLocation()
     }
 #endif
 
+<<<<<<< HEAD
+=======
+    // Select between complete real receiver fixes. No coordinate averaging or
+    // synthetic position is introduced.
+    const uint16_t aggregateQuality = calculateGnssFixQualityScore(fixQual, parsedFixType, p.HDOP, p.PDOP, reader.gsaVDOP());
+    const meshtastic_Position completeCandidate = p;
+    if (!selectGnssQualityFix(completeCandidate, aggregateQuality, Time::getMillis()))
+        return false;
+
+>>>>>>> d96c2ab35217c761c7c1d478e33a6a43da5c37dc
     return true;
 }
 
@@ -2521,6 +2719,11 @@ bool GPS::whileActive()
 }
 void GPS::enable()
 {
+<<<<<<< HEAD
+=======
+    resetGnssQualityFilter();
+
+>>>>>>> d96c2ab35217c761c7c1d478e33a6a43da5c37dc
     // Clear the old scheduling info (reset the lock-time prediction)
     scheduling.reset();
 
@@ -2533,6 +2736,11 @@ void GPS::enable()
 
 int32_t GPS::disable()
 {
+<<<<<<< HEAD
+=======
+    resetGnssQualityFilter();
+
+>>>>>>> d96c2ab35217c761c7c1d478e33a6a43da5c37dc
     enabled = false;
     setInterval(INT32_MAX);
     setPowerState(GPS_OFF);

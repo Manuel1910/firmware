@@ -78,6 +78,21 @@ enum TinyGPSGnssSystem {
     TINYGPS_GNSS_MIXED
 };
 
+<<<<<<< HEAD
+=======
+// Runtime NMEA protocol-family detection for diagnostics.
+//
+// This is deliberately feature-based rather than a guessed exact revision:
+// - LEGACY: no NMEA 2.3+ or 4.x-only feature has been positively observed.
+// - 2.3+: a checksum-valid Mode Indicator has been observed in RMC/GLL/VTG.
+// - 4.x: a checksum-valid GSV Signal ID or GSA System ID has been observed.
+//
+// NMEA 4.x is promoted immediately because Signal ID/System ID are positive
+// evidence. Downgrades are conservative so one atypical sentence cannot make
+// the UI flap between protocol families.
+enum TinyGPSNmeaMode : uint8_t { TINYGPS_NMEA_UNKNOWN = 0, TINYGPS_NMEA_LEGACY, TINYGPS_NMEA_23_PLUS, TINYGPS_NMEA_4X };
+
+>>>>>>> d96c2ab35217c761c7c1d478e33a6a43da5c37dc
 struct TinyGPSGSAInfo {
     uint8_t system = TINYGPS_GNSS_UNKNOWN;
     uint8_t satellitesUsed = 0;
@@ -370,6 +385,11 @@ class TinyGPSPlus
 
     uint32_t gsvAge() const { return lastGSVUpdate ? (uint32_t)(millis() - lastGSVUpdate) : static_cast<uint32_t>(ULONG_MAX); }
 
+<<<<<<< HEAD
+=======
+    TinyGPSNmeaMode nmeaMode() const { return detectedNmeaMode; }
+
+>>>>>>> d96c2ab35217c761c7c1d478e33a6a43da5c37dc
     uint32_t ggaAge() const { return lastGGAUpdate ? (uint32_t)(millis() - lastGGAUpdate) : static_cast<uint32_t>(ULONG_MAX); }
 
     // Raw last-valid GSA/GSV snapshot helpers. These deliberately ignore age.
@@ -390,7 +410,43 @@ class TinyGPSPlus
 
     uint8_t gsaSatellitesUsedSnapshot(uint8_t system) const
     {
+<<<<<<< HEAD
         return system < 7 && gsaInfo[system].valid ? gsaInfo[system].satellitesUsed : 0;
+=======
+        if (system < TINYGPS_GNSS_GPS || system > TINYGPS_GNSS_MIXED)
+            return 0;
+
+        // L76K uses the GP family for GPS and QZSS. Its NMEA 4.x GSA System ID
+        // can therefore be GPS (1) while the used-SVID list still contains
+        // QZSS PRNs 193..197. Reclassify those IDs for per-system diagnostics
+        // without changing the raw total number of used satellites.
+        if (system == TINYGPS_GNSS_QZSS) {
+            if (gsaInfo[TINYGPS_GNSS_QZSS].valid && gsaInfo[TINYGPS_GNSS_QZSS].satellitesUsed > 0)
+                return gsaInfo[TINYGPS_GNSS_QZSS].satellitesUsed;
+
+            uint8_t count = 0;
+            if (gsaInfo[TINYGPS_GNSS_GPS].valid) {
+                for (uint8_t i = 0; i < 12; ++i) {
+                    const uint16_t id = gsaInfo[TINYGPS_GNSS_GPS].satelliteIds[i];
+                    if (id >= 193 && id <= 197)
+                        ++count;
+                }
+            }
+            return count;
+        }
+
+        if (system == TINYGPS_GNSS_GPS && gsaInfo[TINYGPS_GNSS_GPS].valid) {
+            uint8_t count = 0;
+            for (uint8_t i = 0; i < 12; ++i) {
+                const uint16_t id = gsaInfo[TINYGPS_GNSS_GPS].satelliteIds[i];
+                if (id != 0 && !(id >= 193 && id <= 197))
+                    ++count;
+            }
+            return count;
+        }
+
+        return gsaInfo[system].valid ? gsaInfo[system].satellitesUsed : 0;
+>>>>>>> d96c2ab35217c761c7c1d478e33a6a43da5c37dc
     }
 
     uint16_t gsaSatellitesUsedTotalSnapshot() const
@@ -405,11 +461,37 @@ class TinyGPSPlus
 
     bool gsaSatelliteUsedSnapshot(uint8_t system, uint16_t prn) const
     {
+<<<<<<< HEAD
         if (system < TINYGPS_GNSS_GPS || system > TINYGPS_GNSS_QZSS || !gsaInfo[system].valid || prn == 0)
             return false;
         for (uint8_t i = 0; i < 12; ++i)
             if (gsaInfo[system].satelliteIds[i] == prn)
                 return true;
+=======
+        if (system < TINYGPS_GNSS_GPS || system > TINYGPS_GNSS_QZSS || prn == 0)
+            return false;
+
+        // Keep GPS and QZSS distinct for callers even when L76K places a
+        // QZSS PRN in the System-ID 1 GSA bucket.
+        if (system == TINYGPS_GNSS_GPS && prn >= 193 && prn <= 197)
+            return false;
+
+        if (gsaInfo[system].valid) {
+            for (uint8_t i = 0; i < 12; ++i)
+                if (gsaInfo[system].satelliteIds[i] == prn)
+                    return true;
+        }
+
+        // L76K may report QZSS SVIDs 193..197 inside a System-ID 1 (GPS)
+        // GSA, while GSV correctly classifies the same PRNs as QZSS. Bridge
+        // that representation mismatch so the satellite remains marked USED.
+        if (system == TINYGPS_GNSS_QZSS && prn >= 193 && prn <= 197 && gsaInfo[TINYGPS_GNSS_GPS].valid) {
+            for (uint8_t i = 0; i < 12; ++i)
+                if (gsaInfo[TINYGPS_GNSS_GPS].satelliteIds[i] == prn)
+                    return true;
+        }
+
+>>>>>>> d96c2ab35217c761c7c1d478e33a6a43da5c37dc
         return false;
     }
 
@@ -484,15 +566,72 @@ class TinyGPSPlus
 
     uint8_t gsaSatellitesUsed(uint8_t system) const
     {
+<<<<<<< HEAD
         return system < 7 && gsaInfo[system].valid && isFreshAuxTimestamp(gsaInfo[system].lastUpdate)
                    ? gsaInfo[system].satellitesUsed
                    : 0;
+=======
+        if (system < TINYGPS_GNSS_GPS || system > TINYGPS_GNSS_MIXED)
+            return 0;
+
+        if (system == TINYGPS_GNSS_QZSS) {
+            if (gsaInfo[TINYGPS_GNSS_QZSS].valid && isFreshAuxTimestamp(gsaInfo[TINYGPS_GNSS_QZSS].lastUpdate) &&
+                gsaInfo[TINYGPS_GNSS_QZSS].satellitesUsed > 0)
+                return gsaInfo[TINYGPS_GNSS_QZSS].satellitesUsed;
+
+            uint8_t count = 0;
+            if (gsaInfo[TINYGPS_GNSS_GPS].valid && isFreshAuxTimestamp(gsaInfo[TINYGPS_GNSS_GPS].lastUpdate)) {
+                for (uint8_t i = 0; i < 12; ++i) {
+                    const uint16_t id = gsaInfo[TINYGPS_GNSS_GPS].satelliteIds[i];
+                    if (id >= 193 && id <= 197)
+                        ++count;
+                }
+            }
+            return count;
+        }
+
+        if (system == TINYGPS_GNSS_GPS && gsaInfo[TINYGPS_GNSS_GPS].valid &&
+            isFreshAuxTimestamp(gsaInfo[TINYGPS_GNSS_GPS].lastUpdate)) {
+            uint8_t count = 0;
+            for (uint8_t i = 0; i < 12; ++i) {
+                const uint16_t id = gsaInfo[TINYGPS_GNSS_GPS].satelliteIds[i];
+                if (id != 0 && !(id >= 193 && id <= 197))
+                    ++count;
+            }
+            return count;
+        }
+
+        return gsaInfo[system].valid && isFreshAuxTimestamp(gsaInfo[system].lastUpdate) ? gsaInfo[system].satellitesUsed : 0;
+>>>>>>> d96c2ab35217c761c7c1d478e33a6a43da5c37dc
     }
 
     bool gsaSatelliteUsed(uint8_t system, uint16_t prn) const
     {
+<<<<<<< HEAD
         return system >= TINYGPS_GNSS_GPS && system <= TINYGPS_GNSS_MIXED && gsaInfo[system].valid &&
                isFreshAuxTimestamp(gsaInfo[system].lastUpdate) && gsaSatelliteUsedSnapshot(system, prn);
+=======
+        if (system < TINYGPS_GNSS_GPS || system > TINYGPS_GNSS_QZSS || prn == 0)
+            return false;
+
+        if (system == TINYGPS_GNSS_GPS && prn >= 193 && prn <= 197)
+            return false;
+
+        if (gsaInfo[system].valid && isFreshAuxTimestamp(gsaInfo[system].lastUpdate)) {
+            for (uint8_t i = 0; i < 12; ++i)
+                if (gsaInfo[system].satelliteIds[i] == prn)
+                    return true;
+        }
+
+        if (system == TINYGPS_GNSS_QZSS && prn >= 193 && prn <= 197 && gsaInfo[TINYGPS_GNSS_GPS].valid &&
+            isFreshAuxTimestamp(gsaInfo[TINYGPS_GNSS_GPS].lastUpdate)) {
+            for (uint8_t i = 0; i < 12; ++i)
+                if (gsaInfo[TINYGPS_GNSS_GPS].satelliteIds[i] == prn)
+                    return true;
+        }
+
+        return false;
+>>>>>>> d96c2ab35217c761c7c1d478e33a6a43da5c37dc
     }
 
     uint16_t gsaSatellitesUsedTotal() const
@@ -646,6 +785,127 @@ class TinyGPSPlus
     uint32_t mixedGSVSignalMask = 0;
     bool gsvHasSignalId = false;
 
+<<<<<<< HEAD
+=======
+    // Runtime NMEA protocol-family detection.
+    //
+    // Positive evidence is staged while parsing and committed only after the
+    // sentence checksum passes in TinyGPS++.cpp.
+    TinyGPSNmeaMode detectedNmeaMode = TINYGPS_NMEA_UNKNOWN;
+
+    // NMEA 4.x evidence.
+    bool currentGSVSentenceHasSignalId = false;
+    bool pendingGSAHasSystemId = false;
+
+    // NMEA 2.3+ evidence. A Mode Indicator in a checksum-valid RMC/GLL/VTG
+    // proves at least the NMEA 2.3-style extended sentence layout.
+    bool pendingRMCModePresent = false;
+    bool pendingGLLModePresent = false;
+    bool pendingVTGModePresent = false;
+    uint32_t lastNmea23EvidenceMs = 0;
+
+    // Downgrade protection for 4.x -> lower family. Count only complete classic
+    // GSV cycles from the same GNSS system, never individual GSV sentences.
+    uint8_t classicGsvCycleSystem = TINYGPS_GNSS_UNKNOWN;
+    uint8_t classicGsvCycleCount = 0;
+    uint32_t classicGsvDowngradeStartedMs = 0;
+
+    // Downgrade protection for 2.3+ -> legacy. RMC is used as the witness because
+    // it is normally emitted once per navigation epoch.
+    uint8_t classicRmcStreak = 0;
+
+    void promoteNmea23Evidence()
+    {
+        lastNmea23EvidenceMs = sentenceTime;
+        classicRmcStreak = 0;
+        if (detectedNmeaMode == TINYGPS_NMEA_UNKNOWN || detectedNmeaMode == TINYGPS_NMEA_LEGACY)
+            detectedNmeaMode = TINYGPS_NMEA_23_PLUS;
+    }
+
+    void promoteNmea4Evidence()
+    {
+        detectedNmeaMode = TINYGPS_NMEA_4X;
+        classicGsvCycleSystem = TINYGPS_GNSS_UNKNOWN;
+        classicGsvCycleCount = 0;
+        classicGsvDowngradeStartedMs = 0;
+        classicRmcStreak = 0;
+    }
+
+    void commitNmeaModeFromRmc()
+    {
+        if (pendingRMCModePresent) {
+            promoteNmea23Evidence();
+            return;
+        }
+
+        // Do not let one shortened RMC downgrade a newer family. Only when the
+        // stream is currently classified as 2.3+ do three consecutive
+        // checksum-valid RMC sentences without a Mode Indicator prove a stable
+        // legacy-style stream.
+        if (detectedNmeaMode == TINYGPS_NMEA_23_PLUS || detectedNmeaMode == TINYGPS_NMEA_UNKNOWN) {
+            if (classicRmcStreak < 3)
+                ++classicRmcStreak;
+            if (classicRmcStreak >= 3) {
+                detectedNmeaMode = TINYGPS_NMEA_LEGACY;
+                classicRmcStreak = 0;
+            }
+        }
+    }
+
+    void commitNmeaModeFromGsv()
+    {
+        if (currentGSVSentenceHasSignalId) {
+            promoteNmea4Evidence();
+            return;
+        }
+
+        // Count only a complete GSV sequence, not message 1/3, 2/3 and 3/3 as
+        // three independent cycles.
+        if (currentGSVTotalMessages == 0 || currentGSVMessageNumber != currentGSVTotalMessages)
+            return;
+
+        if (detectedNmeaMode == TINYGPS_NMEA_UNKNOWN) {
+            detectedNmeaMode = TINYGPS_NMEA_LEGACY;
+            return;
+        }
+
+        if (detectedNmeaMode != TINYGPS_NMEA_4X)
+            return;
+
+        // Use one constellation/talker as the downgrade witness. This prevents
+        // GPS+GLONASS+BeiDou GSV blocks from satisfying the threshold in one
+        // navigation epoch.
+        if (classicGsvCycleSystem == TINYGPS_GNSS_UNKNOWN) {
+            classicGsvCycleSystem = currentGSVSystem;
+            classicGsvCycleCount = 1;
+            classicGsvDowngradeStartedMs = sentenceTime;
+        } else if (currentGSVSystem == classicGsvCycleSystem && classicGsvCycleCount < 3) {
+            ++classicGsvCycleCount;
+        }
+
+        if (classicGsvCycleCount >= 3) {
+            // If a 2.3+ Mode Indicator was positively observed after the
+            // downgrade window began, retain that lower-bound classification.
+            // Otherwise fall back to LEGACY.
+            if (lastNmea23EvidenceMs != 0 && (int32_t)(lastNmea23EvidenceMs - classicGsvDowngradeStartedMs) >= 0)
+                detectedNmeaMode = TINYGPS_NMEA_23_PLUS;
+            else
+                detectedNmeaMode = TINYGPS_NMEA_LEGACY;
+
+            // The original GSV parser also uses this latch to decide whether
+            // a mixed-GN GSV stream is grouped by NMEA 4.x Signal ID. Once
+            // three complete classic cycles have proven a downgrade, clear
+            // the old 4.x latch so classic cycle clearing becomes active too.
+            gsvHasSignalId = false;
+            mixedGSVSignalMask = 0;
+
+            classicGsvCycleSystem = TINYGPS_GNSS_UNKNOWN;
+            classicGsvCycleCount = 0;
+            classicGsvDowngradeStartedMs = 0;
+        }
+    }
+
+>>>>>>> d96c2ab35217c761c7c1d478e33a6a43da5c37dc
     // GSV parsing updates the working snapshot term-by-term. Keep a rollback
     // copy so a checksum-failed GSV sentence cannot clear or corrupt the last
     // checksum-valid satellite snapshot.

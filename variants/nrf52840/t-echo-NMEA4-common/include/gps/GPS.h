@@ -173,6 +173,20 @@ class GPS : private concurrency::OSThread
     uint16_t getGsaVDOPSnapshot() const { return reader.gsaVDOPSnapshot(); }
     uint32_t getGsvAgeMs() const { return reader.gsvAge(); }
     uint32_t getGsaAgeMs() const { return reader.gsaAge(); }
+<<<<<<< HEAD
+=======
+    TinyGPSNmeaMode getNmeaMode() const { return reader.nmeaMode(); }
+
+    // Quality of the complete GNSS fix currently selected for Meshtastic.
+    // Internally the selector uses 0..1000. The percentage getter is intended
+    // for compact UI diagnostics only.
+    bool hasSelectedFixQuality() const { return qualityCurrentFix.valid; }
+    uint16_t getSelectedFixQualityScore() const { return qualityCurrentFix.valid ? qualityCurrentFix.score : 0; }
+    uint8_t getSelectedFixQualityPercent() const
+    {
+        return qualityCurrentFix.valid ? static_cast<uint8_t>((qualityCurrentFix.score + 5U) / 10U) : 0;
+    }
+>>>>>>> d96c2ab35217c761c7c1d478e33a6a43da5c37dc
 
     uint16_t getSatellitesUsedBySystem(uint8_t system) const { return reader.gsaSatellitesUsed(system); }
     uint16_t getSatellitesInViewBySystem(uint8_t system) const { return reader.satellitesInView(system); }
@@ -284,6 +298,32 @@ class GPS : private concurrency::OSThread
     int32_t cachedProbeBaud = 0;
     GnssModel_t cachedProbeModel = GNSS_MODEL_UNKNOWN;
 
+<<<<<<< HEAD
+=======
+    struct GnssQualityFixCandidate {
+        meshtastic_Position position{};
+        uint16_t score = 0;    // 0..1000 aggregate quality
+        uint32_t sampleMs = 0; // millis() when this complete fix was evaluated
+        bool valid = false;
+    };
+
+    // A small quality selector, not a coordinate smoother:
+    // - equal/better fixes replace the current fix immediately
+    // - one distinctly worse fix is buffered
+    // - if the next fix is also worse, the better of the two new fixes wins
+    // - a current fix can never hold quality authority for more than 3 seconds
+    static constexpr uint16_t GNSS_QUALITY_MAX_SCORE = 1000;
+    static constexpr uint16_t GNSS_QUALITY_EQUIVALENT_MARGIN = 20; // 2% on the 0..1000 scale
+    static constexpr uint32_t GNSS_QUALITY_MAX_HOLD_MS = 3000;
+
+    uint16_t calculateGnssFixQualityScore(uint8_t fixQuality, uint8_t fixType, uint16_t hdop, uint16_t pdop, uint16_t vdop) const;
+    bool selectGnssQualityFix(const meshtastic_Position &candidate, uint16_t score, uint32_t sampleMs);
+    void resetGnssQualityFilter();
+
+    GnssQualityFixCandidate qualityCurrentFix;
+    GnssQualityFixCandidate qualityFallbackFix;
+
+>>>>>>> d96c2ab35217c761c7c1d478e33a6a43da5c37dc
     TinyGPSPlus reader;
     uint8_t fixQual = 0; // fix quality from GPGGA
     uint8_t currentStep = 0;

@@ -253,8 +253,7 @@ static meshtastic_MeshPacket makeDecoded(NodeNum from, NodeNum to, meshtastic_Po
 // because perhapsEncode only auto-signs packets that originate from us.
 static void signWithCurrentKey(meshtastic_MeshPacket *p)
 {
-    bool ok = crypto->xeddsa_sign(p->from, p->id, p->decoded.portnum, p->decoded.payload.bytes, p->decoded.payload.size,
-                                  p->decoded.xeddsa_signature.bytes);
+    bool ok = crypto->xeddsa_sign(p->from, p->id, p->to, &p->decoded, p->decoded.xeddsa_signature.bytes);
     TEST_ASSERT_TRUE_MESSAGE(ok, "xeddsa_sign failed in test setup");
     p->decoded.xeddsa_signature.size = XEDDSA_SIGNATURE_SIZE;
 }
@@ -1089,6 +1088,106 @@ void test_B13_licensed_port_and_destination_signing_matrix(void)
             TEST_ASSERT_FALSE(packet.pki_encrypted);
         }
     }
+}
+
+// B14: PKI needs only the two keys, so a DM can arrive over a channel we do not carry. Its ack is a
+// ROUTING packet, which is PKC-excluded, so it would be channel-encoded and die with NO_CHANNEL -
+// and the sender would then retransmit to exhaustion for a message that WAS delivered. Fall back to
+// PKC for exactly that case.
+void test_B14_ack_with_no_usable_channel_falls_back_to_pkc(void)
+{
+    uint8_t localPub[32], localPriv[32], remotePub[32], remotePriv[32];
+    crypto->generateKeyPair(localPub, localPriv);
+    crypto->generateKeyPair(remotePub, remotePriv);
+    mockNodeDB->addNode(LOCAL_NODE);
+    mockNodeDB->setPublicKey(LOCAL_NODE, localPub);
+    mockNodeDB->addNode(REMOTE_NODE);
+    mockNodeDB->setPublicKey(REMOTE_NODE, remotePub);
+    memcpy(config.security.private_key.bytes, localPriv, sizeof(localPriv));
+    config.security.private_key.size = sizeof(localPriv);
+    crypto->setDHPrivateKey(localPriv);
+
+    // A secondary channel index that does not resolve - otherwise the test proves nothing.
+    const ChannelIndex deadChannel = 1;
+    TEST_ASSERT_LESS_THAN_MESSAGE(0, channels.getHash(deadChannel), "test needs an unusable channel index");
+
+    meshtastic_MeshPacket ack = makeDecoded(LOCAL_NODE, REMOTE_NODE, meshtastic_PortNum_ROUTING_APP, SMALL_PAYLOAD);
+    ack.decoded.request_id = 0xFEED5150;
+    ack.channel = deadChannel;
+
+    TEST_ASSERT_EQUAL_MESSAGE(meshtastic_Routing_Error_NONE, perhapsEncode(&ack),
+                              "ack on an unusable channel must not fail to send");
+    TEST_ASSERT_TRUE_MESSAGE(ack.pki_encrypted, "it must have gone out over PKC");
+}
+
+// The fallback must not paper over a genuinely unsendable ack: with no key for the destination there
+// is nothing to encrypt to, and NO_CHANNEL is still the honest answer.
+void test_B15_ack_with_no_channel_and_no_key_still_fails(void)
+{
+    uint8_t localPub[32], localPriv[32];
+    crypto->generateKeyPair(localPub, localPriv);
+    mockNodeDB->addNode(LOCAL_NODE);
+    mockNodeDB->setPublicKey(LOCAL_NODE, localPub);
+    memcpy(config.security.private_key.bytes, localPriv, sizeof(localPriv));
+    config.security.private_key.size = sizeof(localPriv);
+    crypto->setDHPrivateKey(localPriv);
+    // REMOTE_NODE deliberately absent from the DB, so we hold no key for it.
+
+    const ChannelIndex deadChannel = 1;
+    TEST_ASSERT_LESS_THAN(0, channels.getHash(deadChannel));
+
+    meshtastic_MeshPacket ack = makeDecoded(LOCAL_NODE, REMOTE_NODE, meshtastic_PortNum_ROUTING_APP, SMALL_PAYLOAD);
+    ack.decoded.request_id = 0xFEED5150;
+    ack.channel = deadChannel;
+
+    TEST_ASSERT_EQUAL_MESSAGE(meshtastic_Routing_Error_NO_CHANNEL, perhapsEncode(&ack),
+                              "without a destination key the ack is genuinely unsendable");
+}
+
+// The fallback is scoped to acks: a non-ROUTING unicast on an unusable channel still fails, so this
+// does not quietly turn every channel-less packet into a PKC packet.
+void test_B16_non_ack_on_unusable_channel_still_fails(void)
+{
+    uint8_t localPub[32], localPriv[32], remotePub[32], remotePriv[32];
+    crypto->generateKeyPair(localPub, localPriv);
+    crypto->generateKeyPair(remotePub, remotePriv);
+    mockNodeDB->addNode(REMOTE_NODE);
+    mockNodeDB->setPublicKey(REMOTE_NODE, remotePub);
+    memcpy(config.security.private_key.bytes, localPriv, sizeof(localPriv));
+    config.security.private_key.size = sizeof(localPriv);
+    crypto->setDHPrivateKey(localPriv);
+
+    const ChannelIndex deadChannel = 1;
+    TEST_ASSERT_LESS_THAN(0, channels.getHash(deadChannel));
+
+    // TRACEROUTE is PKC-excluded like ROUTING, but carries no request_id and is not an ack.
+    meshtastic_MeshPacket p = makeDecoded(LOCAL_NODE, REMOTE_NODE, meshtastic_PortNum_TRACEROUTE_APP, SMALL_PAYLOAD);
+    p.channel = deadChannel;
+
+    TEST_ASSERT_EQUAL_MESSAGE(meshtastic_Routing_Error_NO_CHANNEL, perhapsEncode(&p), "the PKC fallback must apply to acks only");
+}
+
+// A ROUTING packet on a channel that DOES resolve keeps taking the channel path, so relays retain
+// the readable acks they use for next-hop learning and retransmission cancel.
+void test_B17_ack_on_a_usable_channel_stays_on_the_channel(void)
+{
+    uint8_t localPub[32], localPriv[32], remotePub[32], remotePriv[32];
+    crypto->generateKeyPair(localPub, localPriv);
+    crypto->generateKeyPair(remotePub, remotePriv);
+    mockNodeDB->addNode(LOCAL_NODE);
+    mockNodeDB->setPublicKey(LOCAL_NODE, localPub);
+    mockNodeDB->addNode(REMOTE_NODE);
+    mockNodeDB->setPublicKey(REMOTE_NODE, remotePub);
+    memcpy(config.security.private_key.bytes, localPriv, sizeof(localPriv));
+    config.security.private_key.size = sizeof(localPriv);
+    crypto->setDHPrivateKey(localPriv);
+
+    meshtastic_MeshPacket ack = makeDecoded(LOCAL_NODE, REMOTE_NODE, meshtastic_PortNum_ROUTING_APP, SMALL_PAYLOAD);
+    ack.decoded.request_id = 0xFEED5150;
+    ack.channel = 0; // the primary, which initDefaults() made usable
+
+    TEST_ASSERT_EQUAL(meshtastic_Routing_Error_NONE, perhapsEncode(&ack));
+    TEST_ASSERT_FALSE_MESSAGE(ack.pki_encrypted, "a sendable ack must stay readable to relays");
 }
 
 // ===========================================================================
@@ -2123,6 +2222,136 @@ void test_E13_decoded_unsigned_nodeinfo_padded_inside_payload_dropped(void)
     TEST_ASSERT_FALSE(p.xeddsa_signed);
 }
 
+// E14: the reason this change exists. A signed broadcast reply (a tapback: the client sets reply_id
+// on an outgoing text, firmware signs the broadcast) has its reply_id in the Data envelope, outside
+// the signed payload. Channel crypto is AES-CTR with no MAC, so before this binding a listener
+// holding the PSK could re-point a signed tapback at a different message and it would still verify.
+void test_E14_decoded_signed_reply_retargeted_reply_id_dropped(void)
+{
+    uint8_t pub[32], priv[32];
+    crypto->generateKeyPair(pub, priv);
+    mockNodeDB->addNode(REMOTE_NODE);
+    mockNodeDB->setPublicKey(REMOTE_NODE, pub);
+
+    meshtastic_MeshPacket p = makeDecoded(REMOTE_NODE, NODENUM_BROADCAST, meshtastic_PortNum_TEXT_MESSAGE_APP, SMALL_PAYLOAD);
+    p.decoded.reply_id = 0x5555AAAA;
+    signWithCurrentKey(&p);
+
+    TEST_ASSERT_TRUE(checkXeddsaReceivePolicy(&p));
+    TEST_ASSERT_TRUE(p.xeddsa_signed);
+
+    p.decoded.reply_id ^= 1; // re-point the tapback at a different message
+    TEST_ASSERT_FALSE_MESSAGE(checkXeddsaReceivePolicy(&p), "a retargeted reply must fail verification");
+    TEST_ASSERT_FALSE(p.xeddsa_signed);
+}
+
+// E15: the same for request_id. Nothing broadcast carries one today, so this is forward cover for
+// any future signed packet that does - and for licensed mode, where unicasts are signed.
+void test_E15_decoded_signed_response_retargeted_request_id_dropped(void)
+{
+    uint8_t pub[32], priv[32];
+    crypto->generateKeyPair(pub, priv);
+    mockNodeDB->addNode(REMOTE_NODE);
+    mockNodeDB->setPublicKey(REMOTE_NODE, pub);
+
+    meshtastic_MeshPacket p = makeDecoded(REMOTE_NODE, NODENUM_BROADCAST, meshtastic_PortNum_TEXT_MESSAGE_APP, SMALL_PAYLOAD);
+    p.decoded.request_id = 0xAAAA5555;
+    signWithCurrentKey(&p);
+
+    TEST_ASSERT_TRUE(checkXeddsaReceivePolicy(&p));
+    p.decoded.request_id ^= 1;
+    TEST_ASSERT_FALSE_MESSAGE(checkXeddsaReceivePolicy(&p), "a retargeted response must fail verification");
+}
+
+// E16: an ordinary signed broadcast with no envelope fields set still verifies. The single layout
+// signs those fields as zero rather than omitting them, so the common case must stay unaffected.
+void test_E16_decoded_signed_broadcast_without_linkage_still_verifies(void)
+{
+    uint8_t pub[32], priv[32];
+    crypto->generateKeyPair(pub, priv);
+    mockNodeDB->addNode(REMOTE_NODE);
+    mockNodeDB->setPublicKey(REMOTE_NODE, pub);
+
+    meshtastic_MeshPacket p = makeDecoded(REMOTE_NODE, NODENUM_BROADCAST, meshtastic_PortNum_TEXT_MESSAGE_APP, SMALL_PAYLOAD);
+    TEST_ASSERT_EQUAL(0, p.decoded.request_id);
+    TEST_ASSERT_EQUAL(0, p.decoded.reply_id);
+    signWithCurrentKey(&p);
+
+    TEST_ASSERT_TRUE(checkXeddsaReceivePolicy(&p));
+    TEST_ASSERT_TRUE(p.xeddsa_signed);
+}
+
+// E17: the other half of the reaction attack. A reaction is a TEXT_MESSAGE carrying the emoji in
+// the payload, reply_id naming the message reacted to, and the emoji flag telling the client to
+// render it as a reaction. Binding reply_id alone would still let a PSK holder flip that flag and
+// turn a signed reply into a signed reaction - or the reverse - on a message the sender never saw.
+void test_E17_decoded_signed_reaction_emoji_flag_flip_dropped(void)
+{
+    uint8_t pub[32], priv[32];
+    crypto->generateKeyPair(pub, priv);
+    mockNodeDB->addNode(REMOTE_NODE);
+    mockNodeDB->setPublicKey(REMOTE_NODE, pub);
+
+    meshtastic_MeshPacket p = makeDecoded(REMOTE_NODE, NODENUM_BROADCAST, meshtastic_PortNum_TEXT_MESSAGE_APP, SMALL_PAYLOAD);
+    p.decoded.reply_id = 0x5555AAAA;
+    p.decoded.emoji = 1;
+    signWithCurrentKey(&p);
+
+    TEST_ASSERT_TRUE(checkXeddsaReceivePolicy(&p));
+    TEST_ASSERT_TRUE(p.xeddsa_signed);
+
+    p.decoded.emoji = 0; // render the reaction as a plain reply instead
+    TEST_ASSERT_FALSE_MESSAGE(checkXeddsaReceivePolicy(&p), "flipping the emoji flag must fail verification");
+    TEST_ASSERT_FALSE(p.xeddsa_signed);
+}
+
+// E18: bitfield bit 0 is OK_TO_MQTT, the sender's consent to being uploaded to a public broker, and
+// MQTT.cpp reads it to decide. Unsigned, a PSK holder could set it on a message the sender marked
+// private and no gateway would know the difference. Stripping the optional field is covered too,
+// since presence is signed separately from the value.
+void test_E18_decoded_signed_broadcast_bitfield_tamper_dropped(void)
+{
+    uint8_t pub[32], priv[32];
+    crypto->generateKeyPair(pub, priv);
+    mockNodeDB->addNode(REMOTE_NODE);
+    mockNodeDB->setPublicKey(REMOTE_NODE, pub);
+
+    meshtastic_MeshPacket p = makeDecoded(REMOTE_NODE, NODENUM_BROADCAST, meshtastic_PortNum_TEXT_MESSAGE_APP, SMALL_PAYLOAD);
+    p.decoded.has_bitfield = true;
+    p.decoded.bitfield = 0; // sender withheld MQTT consent
+    signWithCurrentKey(&p);
+
+    TEST_ASSERT_TRUE(checkXeddsaReceivePolicy(&p));
+
+    meshtastic_MeshPacket granted = p;
+    granted.decoded.bitfield |= BITFIELD_OK_TO_MQTT_MASK;
+    TEST_ASSERT_FALSE_MESSAGE(checkXeddsaReceivePolicy(&granted), "granting MQTT consent in flight must fail verification");
+
+    meshtastic_MeshPacket stripped = p;
+    stripped.decoded.has_bitfield = false;
+    stripped.decoded.bitfield = 0;
+    TEST_ASSERT_FALSE_MESSAGE(checkXeddsaReceivePolicy(&stripped), "stripping the bitfield must fail verification");
+}
+
+// E19: `to` lives in the cleartext header and relays never rewrite it, but it was outside the
+// signature. A signed broadcast could be re-addressed as a direct message and still verify,
+// delivering a public statement as an apparent private one from the same signer.
+void test_E19_decoded_signed_broadcast_readdressed_as_dm_dropped(void)
+{
+    uint8_t pub[32], priv[32];
+    crypto->generateKeyPair(pub, priv);
+    mockNodeDB->addNode(REMOTE_NODE);
+    mockNodeDB->setPublicKey(REMOTE_NODE, pub);
+
+    meshtastic_MeshPacket p = makeDecoded(REMOTE_NODE, NODENUM_BROADCAST, meshtastic_PortNum_TEXT_MESSAGE_APP, SMALL_PAYLOAD);
+    signWithCurrentKey(&p);
+    TEST_ASSERT_TRUE(checkXeddsaReceivePolicy(&p));
+
+    p.to = LOCAL_NODE; // re-addressed from the channel to us
+    TEST_ASSERT_FALSE_MESSAGE(checkXeddsaReceivePolicy(&p), "a re-addressed broadcast must fail verification");
+    TEST_ASSERT_FALSE(p.xeddsa_signed);
+}
+
 void setup()
 {
     initializeTestEnvironment();
@@ -2185,6 +2414,10 @@ void setup()
     RUN_TEST(test_B11_normal_unicast_still_uses_pki);
     RUN_TEST(test_B12_licensed_receiver_does_not_decrypt_pki);
     RUN_TEST(test_B13_licensed_port_and_destination_signing_matrix);
+    RUN_TEST(test_B14_ack_with_no_usable_channel_falls_back_to_pkc);
+    RUN_TEST(test_B15_ack_with_no_channel_and_no_key_still_fails);
+    RUN_TEST(test_B16_non_ack_on_unusable_channel_still_fails);
+    RUN_TEST(test_B17_ack_on_a_usable_channel_stays_on_the_channel);
 
     printf("\n=== Group C: routing pipeline authentication ordering ===\n");
     RUN_TEST(test_C1_invalid_first_copy_does_not_poison_valid_same_id);
@@ -2239,6 +2472,12 @@ void setup()
     RUN_TEST(test_E11_decoded_unsigned_oversized_telemetry_from_signer_accepted);
     RUN_TEST(test_E12_decoded_unsigned_waypoint_padded_inside_payload_dropped);
     RUN_TEST(test_E13_decoded_unsigned_nodeinfo_padded_inside_payload_dropped);
+    RUN_TEST(test_E14_decoded_signed_reply_retargeted_reply_id_dropped);
+    RUN_TEST(test_E15_decoded_signed_response_retargeted_request_id_dropped);
+    RUN_TEST(test_E16_decoded_signed_broadcast_without_linkage_still_verifies);
+    RUN_TEST(test_E17_decoded_signed_reaction_emoji_flag_flip_dropped);
+    RUN_TEST(test_E18_decoded_signed_broadcast_bitfield_tamper_dropped);
+    RUN_TEST(test_E19_decoded_signed_broadcast_readdressed_as_dm_dropped);
 
     const int result = UNITY_END();
     airTime = savedAirTime;
