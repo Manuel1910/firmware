@@ -2,13 +2,6 @@
 #include <cstring> // Include for strstr
 #include <vector>
 
-// TinyGPS++ exposes checksum statistics only through a private member; this build
-// does not use those counters and the local access pattern is invalid. Disable the
-// statistics branch to avoid direct access to private state in a single-file fix.
-#ifndef TINYGPS_OPTION_NO_STATISTICS
-#define TINYGPS_OPTION_NO_STATISTICS
-#endif
-
 #include "configuration.h"
 #if !MESHTASTIC_EXCLUDE_GPS
 #include "Default.h"
@@ -2502,18 +2495,6 @@ bool GPS::lookForLocation()
             satelliteMissingActiveMs = 0;
         }
     }
-
-#ifndef TINYGPS_OPTION_NO_STATISTICS
-    if (reader.failedChecksumCount > lastChecksumFailCount) {
-// In a GPS_DEBUG build we want to log all of these. In production, we only care if there are many of them.
-#if !GPS_DEBUG
-        if (reader.failedChecksumCount > 4)
-#endif
-            LOG_WARN("%u new GPS checksum failures, total %u", reader.failedChecksumCount - lastChecksumFailCount,
-                     reader.failedChecksumCount);
-        lastChecksumFailCount = reader.failedChecksumCount;
-    }
-#endif
 
     // check if GPS has an acceptable lock
     if (!hasLock())
