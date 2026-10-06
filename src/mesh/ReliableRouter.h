@@ -55,6 +55,9 @@ class ReliableRouter : public NextHopRouter
      * destination, so it is never held to the sender check.
      */
     bool ackProofPermitsAction(const meshtastic_MeshPacket *p, PacketId originalId, bool isAck);
+<<<<<<< HEAD
+};
+=======
 
     /** The last verdict ackProofPermitsAction() reached, keyed by the ack that carried it. */
     struct AckProofVerdict {
@@ -64,3 +67,4 @@ class ReliableRouter : public NextHopRouter
     };
     AckProofVerdict lastAckProof;
 };
+>>>>>>> 642076baedb19c74f5f0e0aec1b234bfe86f012d

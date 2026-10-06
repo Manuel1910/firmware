@@ -5,7 +5,10 @@ Import("env")
 # replacement mechanism and avoids adding a second Screen/UI object.
 
 <<<<<<< HEAD
+<<<<<<< HEAD
 
+=======
+>>>>>>> fd5099a19be3e1de299944aaf49035f9e44e6c23
 =======
 >>>>>>> fd5099a19be3e1de299944aaf49035f9e44e6c23
 def replace_screen(env, node):
@@ -16,7 +19,10 @@ def replace_screen(env, node):
     return replacement
 
 <<<<<<< HEAD
+<<<<<<< HEAD
 
+=======
+>>>>>>> fd5099a19be3e1de299944aaf49035f9e44e6c23
 =======
 >>>>>>> fd5099a19be3e1de299944aaf49035f9e44e6c23
 def replace_ui_renderer(env, node):
@@ -27,7 +33,10 @@ def replace_ui_renderer(env, node):
     return replacement
 
 <<<<<<< HEAD
+<<<<<<< HEAD
 
+=======
+>>>>>>> fd5099a19be3e1de299944aaf49035f9e44e6c23
 =======
 >>>>>>> fd5099a19be3e1de299944aaf49035f9e44e6c23
 env.AddBuildMiddleware(replace_screen, "src/graphics/Screen.cpp")
