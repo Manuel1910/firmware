@@ -194,8 +194,6 @@ void ReliableRouter::sniffReceived(const meshtastic_MeshPacket *p, const meshtas
     isBroadcast(p->to) ? FloodingRouter::sniffReceived(p, c) : NextHopRouter::sniffReceived(p, c);
 }
 
-<<<<<<< HEAD
-=======
 #if !(MESHTASTIC_EXCLUDE_PKI)
 static meshtastic_MeshPacket_AckProofStatus toAckProofStatus(AckProofResult result)
 {
@@ -220,7 +218,6 @@ meshtastic_MeshPacket_AckProofStatus ReliableRouter::ackProofStatusFor(const mes
     return meshtastic_MeshPacket_AckProofStatus_ACK_PROOF_ABSENT;
 }
 
->>>>>>> 642076baedb19c74f5f0e0aec1b234bfe86f012d
 bool ReliableRouter::ackProofPermitsAction(const meshtastic_MeshPacket *p, PacketId originalId, bool isAck)
 {
 #if !(MESHTASTIC_EXCLUDE_PKI)
@@ -278,13 +275,9 @@ bool ReliableRouter::ackProofPermitsAction(const meshtastic_MeshPacket *p, Packe
     }
 
     // Safe to key off getFrom(p) below only because it is now known equal to orig->packet->to.
-<<<<<<< HEAD
-    switch (ackProofVerify(p, originalId)) {
-=======
     const AckProofResult verdict = ackProofVerify(p, originalId);
     lastAckProof = {getFrom(p), p->id, toAckProofStatus(verdict)};
     switch (verdict) {
->>>>>>> 642076baedb19c74f5f0e0aec1b234bfe86f012d
     case AckProofResult::VALID:
         LOG_DEBUG("ACK proof OK for 0x%08x", originalId);
         return true;
