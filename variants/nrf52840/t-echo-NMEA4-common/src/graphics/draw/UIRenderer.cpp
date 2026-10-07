@@ -522,10 +522,6 @@ extern uint32_t dopThresholds[5];
 void UIRenderer::drawGps(OLEDDisplay *display, int16_t x, int16_t y, const meshtastic::GPSStatus *gps, bool center)
 {
     char textString[12];
-<<<<<<< HEAD
-=======
-    const bool gpsConnected = gps != nullptr && gps->getIsConnected();
->>>>>>> d96c2ab35217c761c7c1d478e33a6a43da5c37dc
     if (config.position.fixed_position) {
         // Fixed position overrides live GPS state, regardless of gps_mode
         snprintf(textString, sizeof(textString), "Fixed GPS");
@@ -533,7 +529,6 @@ void UIRenderer::drawGps(OLEDDisplay *display, int16_t x, int16_t y, const mesht
         snprintf(textString, sizeof(textString), "No GPS");
     } else if (config.position.gps_mode != meshtastic_Config_PositionConfig_GpsMode_ENABLED) {
         snprintf(textString, sizeof(textString), "GPS off");
-<<<<<<< HEAD
     } else if (!gps || !gps->getIsConnected()) {
         snprintf(textString, sizeof(textString), "No Lock");
     } else if (gps->getIsSleeping()) {
@@ -543,10 +538,6 @@ void UIRenderer::drawGps(OLEDDisplay *display, int16_t x, int16_t y, const mesht
         // Receiver has just woken (or NMEA has not resumed yet). Do not show
         // the previous cycle's satellite count as if it were live.
         snprintf(textString, sizeof(textString), "GPS search");
-=======
-    } else if (!gpsConnected) {
-        snprintf(textString, sizeof(textString), "No Lock");
->>>>>>> d96c2ab35217c761c7c1d478e33a6a43da5c37dc
     } else if (gps->getNumSatellites() == 0) {
         // No position lock and no visible satellites are different states.
         // Show "No Sats" only when the published satellite count is really 0.
@@ -2222,27 +2213,16 @@ void UIRenderer::drawNavigationBar(OLEDDisplay *display, OLEDDisplayUiState *sta
     const int y = navBarVisible ? (SCREEN_HEIGHT - iconSize - 1) : SCREEN_HEIGHT;
 
 #if defined(USE_EINK)
-    // Only show bar briefly after switching frames
-    static uint32_t navBarLastShown = 0;
-    static bool cosmeticRefreshDone = false;
+    // Keep navigation changes fast, but do not schedule an additional
+    // delayed full/cosmetic refresh after the navigation bar disappears.
     static bool navBarPrevVisible = false;
 
     if (navBarVisible && !navBarPrevVisible) {
         EINK_ADD_FRAMEFLAG(display, DEMAND_FAST); // Fast refresh when showing nav bar
-        cosmeticRefreshDone = false;
-        navBarLastShown = millis();
     }
 
     if (!navBarVisible && navBarPrevVisible) {
         EINK_ADD_FRAMEFLAG(display, DEMAND_FAST); // Fast refresh when hiding nav bar
-        navBarLastShown = millis();               // Mark when it disappeared
-    }
-
-    if (!navBarVisible && navBarLastShown != 0 && !cosmeticRefreshDone) {
-        if (millis() - navBarLastShown > 10000) {  // 10s after hidden
-            EINK_ADD_FRAMEFLAG(display, COSMETIC); // One-time ghost cleanup
-            cosmeticRefreshDone = true;
-        }
     }
 
     navBarPrevVisible = navBarVisible;
