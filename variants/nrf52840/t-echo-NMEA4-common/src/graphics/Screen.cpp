@@ -27,15 +27,16 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 <<<<<<< HEAD
 =======
 #include "UptimeClock.h"
->>>>>>> d96c2ab35217c761c7c1d478e33a6a43da5c37dc
+    >>>>>>> d96c2ab35217c761c7c1d478e33a6a43da5c37dc
 #include "configuration.h"
 #include "meshUtils.h"
 #if HAS_SCREEN
 #include "EInkParallelDisplay.h"
 #include <OLEDDisplay.h>
 #if defined(MESHTASTIC_INCLUDE_NICHE_GRAPHICS) && !defined(MESHTASTIC_INCLUDE_INKHUD)
-// Provided by each niche-enabled variant's nicheGraphics.h (defined once, in the main.cpp TU).
-extern NicheGraphics::BaseUIEInkDisplay *setupNicheGraphicsBaseUI();
+    // Provided by each niche-enabled variant's nicheGraphics.h (defined once, in the main.cpp TU).
+    extern NicheGraphics::BaseUIEInkDisplay *
+    setupNicheGraphicsBaseUI();
 #endif
 #if defined(USE_HUB75)
 #include "graphics/HUB75Display.h" // ESP32 HUB75 (I2S-DMA)
